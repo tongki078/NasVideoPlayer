@@ -169,7 +169,7 @@ fun App() {
     LaunchedEffect(Unit) {
         try {
             isLoading = true
-            val response: List<Category> = client.get("http://192.168.0.2:5000/movies").body()
+            val response: List<Category> = client.get("http://192.168.0.2:5000/animations").body()
             myCategories = response
             errorMessage = null
         } catch (e: Exception) {
@@ -243,8 +243,8 @@ fun App() {
 
 @Composable
 fun HomeScreen(paddingValues: PaddingValues, categories: List<Category>, onSeriesClick: (Series) -> Unit) {
-    // 모든 영화를 합쳐서 시리즈별로 그룹화
     val allSeries = categories.flatMap { it.movies }.groupBySeries()
+    val animationSeries = categories.filter { it.name.contains("애니") }.flatMap { it.movies }.groupBySeries()
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
         item { 
@@ -255,9 +255,14 @@ fun HomeScreen(paddingValues: PaddingValues, categories: List<Category>, onSerie
             }
         }
         
-        // "애니메이션" 제목 아래 가로 리스트로 표시
         item {
-            MovieRow("애니메이션", allSeries) { series ->
+            MovieRow("지금 뜨는 애니메이션", animationSeries) { series ->
+                onSeriesClick(series)
+            }
+        }
+
+        item {
+            MovieRow("전체 작품", allSeries) { series ->
                 onSeriesClick(series)
             }
         }
@@ -268,31 +273,63 @@ fun HomeScreen(paddingValues: PaddingValues, categories: List<Category>, onSerie
 
 @Composable
 fun AnimationDetailScreen(paddingValues: PaddingValues, categories: List<Category>, onSeriesClick: (Series) -> Unit) {
-    val allSeries = categories.filter { it.name.contains("애니") }.flatMap { it.movies }.groupBySeries()
+    val animationSeries = categories
+        .filter { it.name.contains("애니") }
+        .flatMap { it.movies }
+        .groupBySeries()
     
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         Spacer(modifier = Modifier.statusBarsPadding().height(60.dp))
         
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = paddingValues.calculateBottomPadding())
-        ) {
-            item {
-                Text(
-                    text = "애니메이션",
-                    color = Color.White,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
-                )
+        if (animationSeries.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("애니메이션 컨텐츠가 없습니다.", color = Color.Gray)
             }
-            
-            item {
-                MovieRow("전체 리스트", allSeries) { series ->
-                    onSeriesClick(series)
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = paddingValues.calculateBottomPadding() + 20.dp)
+            ) {
+                item {
+                    val featured = animationSeries.first()
+                    HeroSection(featured.episodes.firstOrNull(), isCompact = true) {
+                        onSeriesClick(featured)
+                    }
+                }
+
+                item {
+                    Text(
+                        text = "애니메이션 전체 목록",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 12.dp)
+                    )
+                }
+
+                // 3열 그리드 레이아웃
+                val chunks = animationSeries.chunked(3)
+                items(chunks) { rowItems ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        rowItems.forEach { series ->
+                            SeriesPosterCard(
+                                series = series,
+                                onSeriesClick = onSeriesClick,
+                                modifier = Modifier.weight(1f).aspectRatio(0.7f)
+                            )
+                        }
+                        // 행의 아이템이 3개 미만일 경우 빈 공간 채우기
+                        if (rowItems.size < 3) {
+                            repeat(3 - rowItems.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
                 }
             }
-            item { Spacer(modifier = Modifier.height(32.dp)) }
         }
     }
 }
@@ -603,18 +640,24 @@ fun MovieRow(title: String, seriesList: List<Series>, onSeriesClick: (Series) ->
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(seriesList) { series ->
-                SeriesPosterCard(series, onSeriesClick)
+                SeriesPosterCard(
+                    series = series,
+                    onSeriesClick = onSeriesClick,
+                    modifier = Modifier.width(135.dp).height(200.dp)
+                )
             }
         }
     }
 }
 
 @Composable
-fun SeriesPosterCard(series: Series, onSeriesClick: (Series) -> Unit) {
+fun SeriesPosterCard(
+    series: Series,
+    onSeriesClick: (Series) -> Unit,
+    modifier: Modifier = Modifier
+) {
     Card(
-        modifier = Modifier
-            .width(135.dp)
-            .height(200.dp)
+        modifier = modifier
             .clickable { onSeriesClick(series) },
         shape = RoundedCornerShape(4.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
