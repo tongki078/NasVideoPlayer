@@ -55,7 +55,8 @@ data class Movie(
     val id: String,
     val title: String,
     val thumbnailUrl: String? = null,
-    val videoUrl: String
+    val videoUrl: String,
+    val duration: String? = null
 )
 
 data class Series(
@@ -329,7 +330,7 @@ fun SeriesDetailScreen(series: Series, onBack: () -> Unit, onPlayFullScreen: (Mo
     var playingMovie by remember { mutableStateOf<Movie?>(series.episodes.firstOrNull()) }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // 상단 헤더: 뒤로가기 버튼과 제목을 영상 영역 밖으로 완전히 분리
+        // 상단 바 (고정)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -340,21 +341,13 @@ fun SeriesDetailScreen(series: Series, onBack: () -> Unit, onPlayFullScreen: (Mo
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
-            Text(
-                text = series.title,
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp)
-            )
         }
 
+        // 영상 영역 (고정)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(240.dp)
+                .height(210.dp)
                 .background(Color(0xFF1A1A1A))
         ) {
             playingMovie?.let { movie ->
@@ -366,19 +359,79 @@ fun SeriesDetailScreen(series: Series, onBack: () -> Unit, onPlayFullScreen: (Mo
             }
         }
 
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "에피소드", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = "총 ${series.episodes.size}개", fontSize = 12.sp, color = Color.Gray)
-        }
-
-        HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
-
+        // 제목, 정보, 버튼, 리스트를 포함한 스크롤 영역
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(bottom = 20.dp)
         ) {
+            // 제목 및 기본 정보
+            item {
+                Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp)) {
+                    Text(
+                        text = series.title,
+                        color = Color.White,
+                        fontSize = 18.sp, // 20.sp에서 10% 추가 축소
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "총 ${series.episodes.size}개의 에피소드",
+                        fontSize = 12.sp, // 소폭 축소
+                        color = Color.Gray
+                    )
+                }
+            }
+
+            // 재생/저장 버튼 영역
+            item {
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    // 재생 버튼 (높이 약 30% 추가 축소: 30dp -> 24dp)
+                    Button(
+                        onClick = { playingMovie?.let { onPlayFullScreen(it) } },
+                        modifier = Modifier.fillMaxWidth().height(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(4.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("재생", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    
+                    Spacer(modifier = Modifier.height(6.dp))
+                    
+                    // 저장 버튼 (높이 약 30% 추가 축소: 30dp -> 24dp)
+                    Button(
+                        onClick = { /* TODO: 저장 기능 구현 */ },
+                        modifier = Modifier.fillMaxWidth().height(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2B2B2B)),
+                        shape = RoundedCornerShape(4.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("↓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("저장", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+
+            // 에피소드 헤더 및 구분선
+            item {
+                Column {
+                    HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
+                    Text(
+                        text = "에피소드",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
+                    )
+                }
+            }
+
+            // 에피소드 리스트
             items(series.episodes) { episode ->
                 EpisodeItem(episode) { playingMovie = episode }
             }
@@ -389,10 +442,10 @@ fun SeriesDetailScreen(series: Series, onBack: () -> Unit, onPlayFullScreen: (Mo
 @Composable
 fun EpisodeItem(episode: Movie, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(modifier = Modifier.width(120.dp).height(70.dp)) {
+        Box(modifier = Modifier.width(110.dp).height(64.dp)) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalPlatformContext.current)
                     .data(episode.thumbnailUrl?.toSafeUrl()).crossfade(true).build(),
@@ -402,16 +455,39 @@ fun EpisodeItem(episode: Movie, onClick: () -> Unit) {
                 placeholder = ColorPainter(Color(0xFF222222))
             )
             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.align(Alignment.Center).size(24.dp))
+                modifier = Modifier.align(Alignment.Center).size(22.dp))
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = episode.title.extractEpisode() ?: episode.title.cleanTitle(),
-                color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
-            Text(text = "재생하기", color = Color.Gray, fontSize = 12.sp)
+            // 시간 정보 대신 HD 태그와 시청하기 문구 표시
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 4.dp)
+            ) {
+                Surface(
+                    color = Color(0xFF2B2B2B),
+                    shape = RoundedCornerShape(2.dp)
+                ) {
+                    Text(
+                        text = "HD",
+                        color = Color.LightGray,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "시청하기",
+                    color = Color.Gray,
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 }
@@ -421,7 +497,6 @@ fun VideoPlayerScreen(movie: Movie, onBack: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         VideoPlayer(url = movie.videoUrl.toSafeUrl(), modifier = Modifier.fillMaxSize())
         
-        // 닫기(X) 버튼을 우측 상단에 배치 (iOS 네이티브 컨트롤러 위치 고려)
         IconButton(
             onClick = onBack,
             modifier = Modifier
