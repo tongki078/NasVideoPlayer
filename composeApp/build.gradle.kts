@@ -16,13 +16,18 @@ kotlin {
         }
     }
     
+    // iOS 타겟 설정을 더 명시적으로 변경
     listOf(
+        iosX64(),
         iosArm64(),
         iosSimulatorArm64()
     ).forEach { iosTarget ->
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
+            // 의존성 노출 설정
+            export(libs.androidx.lifecycle.viewmodelCompose)
+            export(libs.androidx.lifecycle.runtimeCompose)
         }
     }
     
@@ -34,26 +39,28 @@ kotlin {
             implementation(libs.androidx.media3.exoplayer)
             implementation(libs.androidx.media3.ui)
         }
-        iosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
-        }
+        
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.ui)
             implementation(libs.compose.components.resources)
-            implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.lifecycle.viewmodelCompose)
-            implementation(libs.androidx.lifecycle.runtimeCompose)
+            
+            // api로 선언해야 iosTarget에서 export 가능
+            api(libs.androidx.lifecycle.viewmodelCompose)
+            api(libs.androidx.lifecycle.runtimeCompose)
 
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
 
-            // Coil 이미지 로딩 추가
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)
+        }
+
+        iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
         }
     }
 }
