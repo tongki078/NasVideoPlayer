@@ -38,10 +38,8 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.ImageLoader
-import coil3.network.CacheStrategy
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ImageRequest
-import coil3.request.CachePolicy
 import coil3.request.crossfade
 import io.ktor.client.*
 import io.ktor.client.call.*
@@ -51,6 +49,7 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -78,7 +77,7 @@ data class Series(
     val thumbnailUrl: String? = null
 )
 
-enum class Screen { HOME, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, SEARCH }
+enum class Screen { HOME, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, SEARCH, LATEST }
 
 val client = HttpClient {
     install(ContentNegotiation) {
@@ -100,9 +99,10 @@ val client = HttpClient {
 // 헬퍼: 현재 화면에 따른 서버 type 값 반환 (서버 base_map과 일치시킴)
 fun getServeType(screen: Screen): String {
     return when (screen) {
-        Screen.MOVIES -> "movie"
+        Screen.LATEST -> "latest"     // 서버 LATEST_MOVIES_DIR 대응
+        Screen.MOVIES -> "movie"      // 서버 MOVIES_ROOT_DIR 대응
         Screen.ANIMATIONS -> "anim_all"
-        Screen.FOREIGN_TV -> "ftv"  // "foreign_tv" -> "ftv"로 수정
+        Screen.FOREIGN_TV -> "ftv" 
         Screen.ON_AIR -> "anim"
         else -> "movie"
     }
@@ -118,50 +118,30 @@ fun getFullPath(pathStack: List<String>, fileName: String): String {
     }
 }
 
-// URL에서 특정 파라미터 값을 교체하거나 추가하는 헬퍼
-fun String.fixTypeParam(targetType: String): String {
-    if (!this.startsWith("http")) return this
-    return try {
-        val url = Url(this)
-        val newParams = Parameters.build {
-            url.parameters.forEach { s, list ->
-                if (s == "type") append(s, targetType)
-                else appendAll(s, list)
-            }
-        }
-        URLBuilder(url).apply {
-            parameters.clear()
-            parameters.appendAll(newParams)
-        }.buildString()
-    } catch (e: Exception) {
-        this
-    }
-}
-
 // 비디오 재생을 위한 전용 URL 생성 함수
 fun createVideoServeUrl(currentScreen: Screen, pathStack: List<String>, movie: Movie): String {
-    val type = getServeType(currentScreen)
-    // 서버에서 온 URL이 있더라도 type이 잘못되었을 수 있으므로 교정하여 사용
-    if (movie.videoUrl.startsWith("http")) {
-        return movie.videoUrl.fixTypeParam(type)
-    }
+    if (movie.videoUrl.startsWith("http")) return movie.videoUrl
     
+    val type = getServeType(currentScreen)
     val fullPath = getFullPath(pathStack, movie.videoUrl)
-    return "$BASE_URL/video_serve?type=$type&path=${fullPath.encodeURLParameter()}"
+    return URLBuilder("$BASE_URL/video_serve").apply {
+        parameters["type"] = type
+        parameters["path"] = fullPath
+    }.buildString()
 }
 
 // 썸네일 로딩을 위한 전용 URL 생성 함수
 fun createThumbServeUrl(currentScreen: Screen, pathStack: List<String>, movie: Movie): String {
     val thumb = movie.thumbnailUrl ?: return ""
+    if (thumb.startsWith("http")) return thumb
+
     val type = getServeType(currentScreen)
-    
-    // 서버에서 온 URL이 있더라도 type이 잘못되었을 수 있으므로 교정하여 사용
-    if (thumb.startsWith("http")) {
-        return thumb.fixTypeParam(type)
-    }
-    
     val fullPath = getFullPath(pathStack, movie.videoUrl)
-    return "$BASE_URL/thumb_serve?type=$type&id=${thumb.encodeURLParameter()}&path=${fullPath.encodeURLParameter()}"
+    return URLBuilder("$BASE_URL/thumb_serve").apply {
+        parameters["type"] = type
+        parameters["id"] = thumb
+        parameters["path"] = fullPath
+    }.buildString()
 }
 
 fun String.cleanTitle(): String {
@@ -172,28 +152,22 @@ fun String.cleanTitle(): String {
     }
     val techPattern = "(?i)\\.?(?:\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|KL).*"
     cleaned = cleaned.replace(Regex(techPattern), "")
-    val dateMatch = Regex("\\.(\\d{2})\\d{4}(\\.|$)").find(cleaned)
-    var extractedYear = ""
-    if (dateMatch != null) {
-        extractedYear = "20" + dateMatch.groupValues[1]
-        cleaned = cleaned.replace(dateMatch.value, ".")
-    }
+    
+    val yearRegex = "(?i)[\\s.\\-\\[(]+(19|20)\\d{2}[\\s.\\-\\])]*"
+    cleaned = cleaned.replace(Regex(yearRegex), " ").trim()
+    
     cleaned = cleaned.replace(Regex("(?i)\\.?[Ee]\\d+"), "")
     cleaned = cleaned.replace(".", " ").replace("_", " ")
     cleaned = cleaned.replace(Regex("\\(([^)]+)\\)"), "[$1]")
     cleaned = cleaned.replace(Regex("\\[\\s+"), "[").replace(Regex("\\s+]"), "]")
-    val yearMatch = Regex("(19|20)\\d{2}").find(cleaned)
-    if (yearMatch != null) {
-        val year = yearMatch.value
-        val titleBeforeYear = cleaned.take(yearMatch.range.first).trim()
-        cleaned = if (titleBeforeYear.endsWith("-")) "$titleBeforeYear $year"
-        else if (titleBeforeYear.isNotEmpty()) "$titleBeforeYear - $year"
-        else year
-    } else if (extractedYear.isNotEmpty()) {
-        cleaned = if (cleaned.contains(" - ")) cleaned else "$cleaned - $extractedYear"
+    
+    cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+    
+    while (cleaned.endsWith("-") || cleaned.endsWith(".") || cleaned.endsWith("_")) {
+        cleaned = cleaned.dropLast(1).trim()
     }
-    cleaned = cleaned.replace(Regex("\\s+"), " ").replace(Regex("\\s-\\s+"), " - ")
-    return cleaned.trim()
+    
+    return cleaned
 }
 
 fun String.extractEpisode(): String? {
@@ -249,6 +223,7 @@ fun App() {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var selectedMovie by remember { mutableStateOf<Movie?>(null) }
     var selectedSeries by remember { mutableStateOf<Series?>(null) }
+    var selectedItemScreen by rememberSaveable { mutableStateOf(Screen.HOME) } 
     var currentScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -320,25 +295,23 @@ fun App() {
         )
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            val movie = selectedMovie
-            val series = selectedSeries
             
-            if (movie != null) {
+            if (selectedMovie != null) {
                 VideoPlayerScreen(
-                    movie = movie,
-                    currentScreen = currentScreen,
+                    movie = selectedMovie!!,
+                    currentScreen = selectedItemScreen,
                     pathStack = currentPathStack
                 ) { selectedMovie = null }
-            } else if (series != null || isExplorerSeriesMode) {
+            } else if (selectedSeries != null || isExplorerSeriesMode) {
                 val categoryTitle = when {
-                    currentScreen == Screen.ON_AIR -> "라프텔 애니메이션"
-                    currentScreen == Screen.ANIMATIONS -> "애니메이션"
-                    currentScreen == Screen.MOVIES -> "영화"
-                    currentScreen == Screen.FOREIGN_TV -> "외국 TV"
+                    (selectedSeries != null && selectedItemScreen == Screen.ON_AIR) || currentScreen == Screen.ON_AIR -> "라프텔 애니메이션"
+                    (selectedSeries != null && selectedItemScreen == Screen.ANIMATIONS) || currentScreen == Screen.ANIMATIONS -> "애니메이션"
+                    (selectedSeries != null && (selectedItemScreen == Screen.LATEST || selectedItemScreen == Screen.MOVIES)) || currentScreen == Screen.MOVIES -> "영화"
+                    (selectedSeries != null && selectedItemScreen == Screen.FOREIGN_TV) || currentScreen == Screen.FOREIGN_TV -> "외국 TV"
                     else -> ""
                 }
 
-                val seriesData = if (series != null) series
+                val seriesData = if (selectedSeries != null) selectedSeries!!
                 else {
                     val items = when (currentScreen) {
                         Screen.MOVIES -> movieItems
@@ -360,14 +333,18 @@ fun App() {
                 SeriesDetailScreen(
                     series = seriesData,
                     categoryTitle = categoryTitle,
-                    currentScreen = currentScreen,
+                    currentScreen = if (selectedSeries != null) selectedItemScreen else currentScreen,
                     pathStack = currentPathStack,
                     onBack = {
-                        if (selectedSeries != null) selectedSeries = null
-                        else when (currentScreen) {
-                            Screen.MOVIES -> moviePathStack = moviePathStack.dropLast(1)
-                            Screen.ANIMATIONS -> aniPathStack = aniPathStack.dropLast(1)
-                            else -> foreignTvPathStack = foreignTvPathStack.dropLast(1)
+                        if (selectedSeries != null) {
+                            selectedSeries = null
+                        } else {
+                            when (currentScreen) {
+                                Screen.MOVIES -> moviePathStack = moviePathStack.dropLast(1)
+                                Screen.ANIMATIONS -> aniPathStack = aniPathStack.dropLast(1)
+                                Screen.LATEST -> {} 
+                                else -> foreignTvPathStack = foreignTvPathStack.dropLast(1)
+                            }
                         }
                     },
                     onPlayFullScreen = { selectedMovie = it }
@@ -401,12 +378,18 @@ fun App() {
                             ErrorView(errorMessage!!) { currentScreen = Screen.HOME }
                         } else {
                             when (currentScreen) {
-                                Screen.HOME -> HomeScreen(homeLatestCategories, onAirCategories) { selectedSeries = it }
+                                Screen.HOME -> HomeScreen(homeLatestCategories, onAirCategories) { series, screen -> 
+                                    selectedSeries = series
+                                    selectedItemScreen = screen
+                                }
                                 Screen.ON_AIR -> CategoryListScreen(
                                     title = "방송중", 
                                     rowTitle = "라프텔 애니메이션",
                                     categories = onAirCategories
-                                ) { selectedSeries = it }
+                                ) { series, screen ->
+                                    selectedSeries = series
+                                    selectedItemScreen = screen
+                                }
                                 Screen.ANIMATIONS -> MovieExplorer(
                                     title = "애니메이션",
                                     pathStack = aniPathStack,
@@ -433,8 +416,12 @@ fun App() {
                                     onQueryChange = { searchQuery = it },
                                     selectedCategory = searchCategory,
                                     onCategoryChange = { searchCategory = it },
-                                    onSeriesClick = { selectedSeries = it }
+                                    onSeriesClick = { series, screen ->
+                                        selectedSeries = series
+                                        selectedItemScreen = screen
+                                    }
                                 )
+                                else -> {}
                             }
                         }
                     }
@@ -450,7 +437,7 @@ fun SearchScreen(
     onQueryChange: (String) -> Unit,
     selectedCategory: String,
     onCategoryChange: (String) -> Unit,
-    onSeriesClick: (Series) -> Unit
+    onSeriesClick: (Series, Screen) -> Unit
 ) {
     val categories = listOf("전체", "방송중", "애니메이션", "최신영화", "영화", "외국TV")
     val suggestedKeywords = listOf("짱구", "나혼자만 레벨업", "가족 모집", "최신 영화")
@@ -558,15 +545,26 @@ fun SearchScreen(
             } else if (searchResults.isEmpty()) {
                 Text("검색 결과가 없습니다", color = Color.Gray, fontSize = 16.sp, modifier = Modifier.align(Alignment.Center))
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(searchResults) { series ->
-                        SearchGridItem(series, onSeriesClick)
+                val screen = when (selectedCategory) {
+                    "방송중" -> Screen.ON_AIR
+                    "애니메이션" -> Screen.ANIMATIONS
+                    "최신영화" -> Screen.LATEST
+                    "영화" -> Screen.MOVIES
+                    "외국TV" -> Screen.FOREIGN_TV
+                    else -> Screen.HOME
+                }
+                BoxWithConstraints {
+                    val isTablet = maxWidth > 600.dp
+                    LazyVerticalGrid(
+                        columns = if (isTablet) GridCells.Fixed(4) else GridCells.Fixed(3),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(searchResults) { series ->
+                            SearchGridItem(series, screen, isTablet) { onSeriesClick(it, screen) }
+                        }
                     }
                 }
             }
@@ -575,11 +573,10 @@ fun SearchScreen(
 }
 
 @Composable
-fun SearchGridItem(series: Series, onSeriesClick: (Series) -> Unit) {
+fun SearchGridItem(series: Series, screen: Screen, isTablet: Boolean, onSeriesClick: (Series) -> Unit) {
     Card(modifier = Modifier.aspectRatio(2f/3f).clickable { onSeriesClick(series) }, shape = RoundedCornerShape(4.dp)) {
         Box(Modifier.fillMaxSize()) {
-            // 검색 결과에서도 올바른 썸네일 URL을 위해 Series의 첫 번째 에피소드 정보를 활용
-            val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(Screen.HOME, emptyList(), it) }
+            val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(screen, emptyList(), it) }
             AsyncImage(
                 model = ImageRequest.Builder(LocalPlatformContext.current)
                     .data(thumbUrl)
@@ -589,8 +586,19 @@ fun SearchGridItem(series: Series, onSeriesClick: (Series) -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
-            Text(text = series.title, color = Color.White, modifier = Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 12.dp), style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))))
+            Text(
+                text = series.title, 
+                color = Color.White, 
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 12.dp, end = 8.dp), 
+                style = TextStyle(
+                    fontSize = if (isTablet) 40.sp else 18.sp, 
+                    fontWeight = FontWeight.Bold,
+                    shadow = Shadow(color = Color.Black, blurRadius = 12f)
+                ), 
+                maxLines = 2, 
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -668,32 +676,28 @@ fun NasAppBar(title: String, onBack: (() -> Unit)? = null) {
 }
 
 @Composable
-fun HomeScreen(latest: List<Category>, ani: List<Category>, onSeriesClick: (Series) -> Unit) {
+fun HomeScreen(latest: List<Category>, ani: List<Category>, onSeriesClick: (Series, Screen) -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) { 
         item {
-            val all = latest.flatMap { it.movies } + ani.flatMap { it.movies }
-            HeroSection(all.firstOrNull()) { movie -> all.groupBySeries().find { it.episodes.any { ep -> ep.id == movie.id } }?.let { onSeriesClick(it) } }
-        }
-        item { MovieRow("최신 영화", Screen.MOVIES, latest.flatMap { it.movies }.groupBySeries(), onSeriesClick) }
-        item { MovieRow("라프텔 애니메이션", Screen.ON_AIR, ani.flatMap { it.movies }.groupBySeries(), onSeriesClick) }
+            val latestMovies = latest.flatMap { it.movies }
+            val aniMovies = ani.flatMap { it.movies }
+            val all = latestMovies + aniMovies
+            val heroMovie = all.firstOrNull()
+            
+            val heroScreen = if (heroMovie != null && latestMovies.any { it.id == heroMovie.id }) {
+                Screen.LATEST
+            } else {
+                Screen.ON_AIR
+            }
 
-        item {
-            Spacer(Modifier.height(40.dp))
-            Button(
-                onClick = {
-                    val testMovie = Movie(
-                        id = "test_mkv",
-                        title = "가난뱅이 신이! 테스트",
-                        videoUrl = "$BASE_URL/video_serve?type=anim_all&path=시리즈/가/가난뱅이 신이! (2012)/[Moozzi2] Binbougami ga! - S01E01 (BD 1920x1080 x.264 FLACx2).mkv"
-                    )
-                    onSeriesClick(Series(testMovie.title, listOf(testMovie), testMovie.thumbnailUrl))
-                },
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
-            ) {
-                Text("🎬 가난뱅이 신이! 테스트 재생", color = Color.White)
+            HeroSection(heroMovie, heroScreen) { movie -> 
+                val isLatest = latestMovies.any { it.id == movie.id }
+                val screen = if (isLatest) Screen.LATEST else Screen.ON_AIR
+                all.groupBySeries().find { it.episodes.any { ep -> ep.id == movie.id } }?.let { onSeriesClick(it, screen) } 
             }
         }
+        item { MovieRow("최신 영화", Screen.LATEST, latest.flatMap { it.movies }.groupBySeries(), onSeriesClick) }
+        item { MovieRow("라프텔 애니메이션", Screen.ON_AIR, ani.flatMap { it.movies }.groupBySeries(), onSeriesClick) }
     }
 }
 
@@ -702,7 +706,7 @@ fun CategoryListScreen(
     title: String, 
     rowTitle: String,
     categories: List<Category>, 
-    onSeriesClick: (Series) -> Unit
+    onSeriesClick: (Series, Screen) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = title)
@@ -720,27 +724,43 @@ fun CategoryListScreen(
 }
 
 @Composable
-fun MovieRow(title: String, screen: Screen, seriesList: List<Series>, onSeriesClick: (Series) -> Unit) {
+fun MovieRow(title: String, screen: Screen, seriesList: List<Series>, onSeriesClick: (Series, Screen) -> Unit) {
     if (seriesList.isEmpty()) return
-    Column(modifier = Modifier.padding(vertical = 12.dp)) {
-        Text(text = title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, fontSize = 22.sp), color = Color.White, modifier = Modifier.padding(start = 16.dp, bottom = 12.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(seriesList) { series ->
-                Card(modifier = Modifier.width(120.dp).height(180.dp).clickable { onSeriesClick(series) }, shape = RoundedCornerShape(4.dp)) {
-                    Box(Modifier.fillMaxSize()) {
-                        // MovieRow에서도 올바른 썸네일 URL 생성을 위해 에피소드 정보 활용
-                        val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(screen, emptyList(), it) }
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalPlatformContext.current)
-                                .data(thumbUrl)
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.8f))))
-                        Text(text = series.title, color = Color.White, modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 20.dp), style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, shadow = Shadow(color = Color.Black, blurRadius = 4f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    BoxWithConstraints {
+        val isTablet = maxWidth > 600.dp
+        val itemWidth = if (isTablet) 200.dp else 120.dp
+        val itemHeight = if (isTablet) 300.dp else 180.dp
+
+        Column(modifier = Modifier.padding(vertical = 12.dp)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, fontSize = 22.sp), color = Color.White, modifier = Modifier.padding(start = 16.dp, bottom = 12.dp))
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(seriesList) { series ->
+                    Card(modifier = Modifier.width(itemWidth).height(itemHeight).clickable { onSeriesClick(series, screen) }, shape = RoundedCornerShape(4.dp)) {
+                        Box(Modifier.fillMaxSize()) {
+                            val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(screen, emptyList(), it) }
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalPlatformContext.current)
+                                    .data(thumbUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                            Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))))
+                            Text(
+                                text = series.title, 
+                                color = Color.White, 
+                                modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 12.dp, end = 8.dp), 
+                                style = TextStyle(
+                                    fontSize = if (isTablet) 32.sp else 14.sp, 
+                                    fontWeight = FontWeight.Bold, 
+                                    shadow = Shadow(color = Color.Black, blurRadius = 10f)
+                                ), 
+                                maxLines = 2, 
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -757,7 +777,16 @@ fun SeriesDetailScreen(
     onBack: () -> Unit, 
     onPlayFullScreen: (Movie) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var playingMovie by remember(series) { mutableStateOf(series.episodes.firstOrNull()) }
+
+    // 화면을 벗어날 때 자동으로 서버에 중지 요청
+    DisposableEffect(Unit) {
+        onDispose {
+            scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).navigationBarsPadding()) {
         NasAppBar(title = categoryTitle, onBack = onBack)
         Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) {
@@ -796,6 +825,15 @@ fun SeriesDetailScreen(
 
 @Composable
 fun VideoPlayerScreen(movie: Movie, currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+
+    // 화면을 벗어날 때 자동으로 서버에 중지 요청
+    DisposableEffect(Unit) {
+        onDispose {
+            scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         val finalUrl = createVideoServeUrl(currentScreen, pathStack, movie)
         VideoPlayer(finalUrl, Modifier.fillMaxSize())
@@ -806,69 +844,75 @@ fun VideoPlayerScreen(movie: Movie, currentScreen: Screen, pathStack: List<Strin
 }
 
 @Composable
-fun HeroSection(movie: Movie?, onPlayClick: (Movie) -> Unit) {
+fun HeroSection(movie: Movie?, screen: Screen, onPlayClick: (Movie) -> Unit) {
     if (movie == null) return
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1A1A1A))
-                .clickable { onPlayClick(movie) }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        val isTablet = maxWidth > 600.dp
+        val horizontalPadding = if (isTablet) maxWidth * 0.25f else 24.dp
+        val aspectRatio = 0.7f
+
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val thumbUrl = createThumbServeUrl(Screen.HOME, emptyList(), movie)
-            AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current)
-                    .data(thumbUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.6f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.9f)
-                        )
-                    )
-            )
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxWidth()
+                    .aspectRatio(aspectRatio)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF1A1A1A))
+                    .clickable { onPlayClick(movie) }
             ) {
-                Text(
-                    text = movie.title.prettyTitle(),
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    style = TextStyle(
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Black,
-                        shadow = Shadow(color = Color.Black, blurRadius = 8f)
-                    ),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                val thumbUrl = createThumbServeUrl(screen, emptyList(), movie)
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(thumbUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
                 )
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = { onPlayClick(movie) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(4.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
-                    modifier = Modifier.height(44.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.4f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.95f)
+                            )
+                        )
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (isTablet) 32.dp else 24.dp, start = 16.dp, end = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("재생", color = Color.Black, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        text = movie.title.prettyTitle(),
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        style = TextStyle(
+                            fontSize = if (isTablet) 42.sp else 24.sp,
+                            fontWeight = FontWeight.Black,
+                            shadow = Shadow(color = Color.Black, blurRadius = 15f)
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(if (isTablet) 12.dp else 12.dp))
+                    Button(
+                        onClick = { onPlayClick(movie) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(4.dp),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
+                        modifier = Modifier.height(if (isTablet) 44.dp else 44.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("재생", color = Color.Black, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                    }
                 }
             }
         }
