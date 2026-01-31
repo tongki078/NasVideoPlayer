@@ -50,11 +50,17 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 const val BASE_URL = "http://192.168.0.2:5000"
 const val IPHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+// TMDB API 설정 (API Read Access Token 사용)
+const val TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3OGNiYWQ0ZjQ3NzcwYjYyYmZkMTcwNTA2NDIwZDQyYyIsIm5iZiI6MTY1MzY3NTU4MC45MTUsInN1YiI6IjYyOTExNjNjMTI0MjVjMDA1MjI0ZGQzNCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3YU0WuIx_WDo6nTRKehRtn4N5I4uCgjI1tlpkqfsUhk"
+const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
+const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
 @Serializable
 data class Category(
@@ -77,6 +83,20 @@ data class Series(
     val thumbnailUrl: String? = null
 )
 
+@Serializable
+data class TmdbSearchResponse(
+    val results: List<TmdbResult>
+)
+
+@Serializable
+data class TmdbResult(
+    @SerialName("poster_path") val posterPath: String? = null,
+    @SerialName("backdrop_path") val backdropPath: String? = null,
+    @SerialName("name") val name: String? = null,
+    @SerialName("title") val title: String? = null,
+    @SerialName("media_type") val mediaType: String? = null
+)
+
 enum class Screen { HOME, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, SEARCH, LATEST }
 
 val client = HttpClient {
@@ -96,11 +116,144 @@ val client = HttpClient {
     }
 }
 
-// 헬퍼: 현재 화면에 따른 서버 type 값 반환 (서버 base_map과 일치시킴)
+// TMDB에서 포스터 URL을 찾아오는 함수 (검색 최적화 최종 강화판)
+suspend fun fetchTmdbPoster(title: String): String? {
+    if (TMDB_API_KEY.isBlank() || TMDB_API_KEY == "YOUR_TMDB_API_KEY") return null
+    
+    // 0. 가장 먼저 원본에 가까운 이름으로 시도 (확장자 및 대괄호만 제거)
+    val rawClean = title.substringBeforeLast('.')
+        .replace(Regex("\\[.*?\\]"), "")
+        .replace(Regex("\\(.*?\\)"), "")
+        .trim()
+    if (rawClean.length >= 2) {
+        val p = searchTmdb(rawClean, "ko-KR") ?: searchTmdb(rawClean, null)
+        if (p != null) return p
+    }
+
+    // 1. 순수 제목(연도 제외) 추출
+    val baseTitle = title.cleanTitle(keepAfterHyphen = false, includeYear = false)
+    if (baseTitle.isEmpty()) return null
+    
+    // 2. 연도 추출
+    val yearRegex = Regex("(?<!\\d)(19|20)\\d{2}(?!\\d)")
+    val year = yearRegex.find(title)?.value
+
+    // 전략 1: 제목 + 연도 (정확도 우선)
+    val queryWithYear = if (year != null) "$baseTitle $year" else baseTitle
+    var poster = searchTmdb(queryWithYear, "ko-KR") ?: searchTmdb(queryWithYear, null)
+    if (poster != null) return poster
+
+    // 전략 2: 순수 제목만 (연도가 파일명 정보와 다를 수 있으므로)
+    if (year != null) {
+        poster = searchTmdb(baseTitle, "ko-KR") ?: searchTmdb(baseTitle, null)
+        if (poster != null) return poster
+    }
+
+    // 전략 3: 하이픈 포함 전체 제목
+    val fullClean = title.cleanTitle(keepAfterHyphen = true, includeYear = false)
+    if (fullClean != baseTitle) {
+        poster = searchTmdb(fullClean, "ko-KR") ?: searchTmdb(fullClean, null)
+        if (poster != null) return poster
+    }
+
+    // 전략 4: 단어 조합 줄여가며 검색 (히나Doll 같은 복합어 대응)
+    val words = baseTitle.split(" ").filter { it.isNotBlank() }
+    if (words.size >= 2) {
+        for (i in (words.size - 1) downTo 1) {
+            val shortQuery = words.take(i).joinToString(" ")
+            if (shortQuery.length < 2) continue
+            poster = searchTmdb(shortQuery, "ko-KR") ?: searchTmdb(shortQuery, null)
+            if (poster != null) return poster
+        }
+    }
+    
+    return poster
+}
+
+private suspend fun searchTmdb(query: String, language: String?): String? {
+    if (query.isBlank()) return null
+    return try {
+        val response: TmdbSearchResponse = client.get("$TMDB_BASE_URL/search/multi") {
+            if (TMDB_API_KEY.startsWith("eyJ")) {
+                header("Authorization", "Bearer $TMDB_API_KEY")
+            } else {
+                parameter("api_key", TMDB_API_KEY)
+            }
+            parameter("query", query)
+            if (language != null) parameter("language", language)
+            parameter("include_adult", "false")
+        }.body()
+        
+        val result = response.results
+            .filter { it.mediaType != "person" }
+            .firstOrNull { it.posterPath != null } 
+            ?: response.results.firstOrNull { it.backdropPath != null }
+            
+        val path = result?.posterPath ?: result?.backdropPath
+        if (path != null) "$TMDB_IMAGE_BASE$path" else null
+    } catch (e: Exception) {
+        null
+    }
+}
+
+@Composable
+fun TmdbAsyncImage(
+    title: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    var imageUrl by remember(title) { mutableStateOf<String?>(null) }
+    var isError by remember(title) { mutableStateOf(false) }
+    
+    LaunchedEffect(title) {
+        imageUrl = fetchTmdbPoster(title)
+        if (imageUrl == null) isError = true
+    }
+
+    Box(modifier = modifier.background(Color(0xFF1A1A1A))) {
+        if (imageUrl != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalPlatformContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale,
+                onError = { isError = true }
+            )
+        }
+        
+        if (isError || (imageUrl == null)) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(8.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.DarkGray,
+                    modifier = Modifier.size(40.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = title.cleanTitle(),
+                    color = Color.DarkGray,
+                    fontSize = 10.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 fun getServeType(screen: Screen): String {
     return when (screen) {
-        Screen.LATEST -> "latest"     // 서버 LATEST_MOVIES_DIR 대응
-        Screen.MOVIES -> "movie"      // 서버 MOVIES_ROOT_DIR 대응
+        Screen.LATEST -> "latest"
+        Screen.MOVIES -> "movie"
         Screen.ANIMATIONS -> "anim_all"
         Screen.FOREIGN_TV -> "ftv" 
         Screen.ON_AIR -> "anim"
@@ -108,7 +261,6 @@ fun getServeType(screen: Screen): String {
     }
 }
 
-// 헬퍼: 현재 경로 스택과 파일명을 조합하여 전체 경로 생성
 fun getFullPath(pathStack: List<String>, fileName: String): String {
     val stackPath = pathStack.joinToString("/")
     return if (stackPath.isNotEmpty()) {
@@ -118,10 +270,8 @@ fun getFullPath(pathStack: List<String>, fileName: String): String {
     }
 }
 
-// 비디오 재생을 위한 전용 URL 생성 함수
 fun createVideoServeUrl(currentScreen: Screen, pathStack: List<String>, movie: Movie): String {
     if (movie.videoUrl.startsWith("http")) return movie.videoUrl
-    
     val type = getServeType(currentScreen)
     val fullPath = getFullPath(pathStack, movie.videoUrl)
     return URLBuilder("$BASE_URL/video_serve").apply {
@@ -130,41 +280,64 @@ fun createVideoServeUrl(currentScreen: Screen, pathStack: List<String>, movie: M
     }.buildString()
 }
 
-// 썸네일 로딩을 위한 전용 URL 생성 함수
-fun createThumbServeUrl(currentScreen: Screen, pathStack: List<String>, movie: Movie): String {
-    val thumb = movie.thumbnailUrl ?: return ""
-    if (thumb.startsWith("http")) return thumb
-
-    val type = getServeType(currentScreen)
-    val fullPath = getFullPath(pathStack, movie.videoUrl)
-    return URLBuilder("$BASE_URL/thumb_serve").apply {
-        parameters["type"] = type
-        parameters["id"] = thumb
-        parameters["path"] = fullPath
-    }.buildString()
-}
-
-fun String.cleanTitle(): String {
+fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = true): String {
     var cleaned = this
+
+    // 1. 확장자 제거
     if (cleaned.contains(".")) {
         val ext = cleaned.substringAfterLast('.')
         if (ext.length in 2..4) cleaned = cleaned.substringBeforeLast('.')
     }
-    val techPattern = "(?i)\\.?(?:\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|KL).*"
-    cleaned = cleaned.replace(Regex(techPattern), "")
     
-    val yearRegex = "(?i)[\\s.\\-\\[(]+(19|20)\\d{2}[\\s.\\-\\])]*"
-    cleaned = cleaned.replace(Regex(yearRegex), " ").trim()
+    // 2. 검색 최적화: 한글과 영문/숫자 사이 공백 삽입 (히나Doll -> 히나 Doll)
+    cleaned = cleaned.replace(Regex("([가-힣])([a-zA-Z0-9])"), "$1 $2")
+    cleaned = cleaned.replace(Regex("([a-zA-Z0-9])([가-힣])"), "$1 $2")
+
+    // 3. 연도 추출 및 본문에서 제거 (중복 방지)
+    val yearRegex = Regex("\\((19|20)\\d{2}\\)|(?<!\\d)(19|20)\\d{2}(?!\\d)")
+    val yearMatch = yearRegex.find(cleaned)
+    val yearStr = yearMatch?.value?.replace("(", "")?.replace(")", "")
     
-    cleaned = cleaned.replace(Regex("(?i)\\.?[Ee]\\d+"), "")
-    cleaned = cleaned.replace(".", " ").replace("_", " ")
-    cleaned = cleaned.replace(Regex("\\(([^)]+)\\)"), "[$1]")
-    cleaned = cleaned.replace(Regex("\\[\\s+"), "[").replace(Regex("\\s+]"), "]")
+    if (yearMatch != null) {
+        cleaned = cleaned.replace(yearMatch.value, " ")
+    }
+
+    // 4. (더빙), [자막] 등 모든 괄호 태그 제거
+    cleaned = cleaned.replace(Regex("\\[.*?\\]"), " ").replace(Regex("\\(.*?\\)"), " ")
+
+    // 5. 하이픈 이후 제거 (옵션)
+    if (!keepAfterHyphen && cleaned.contains(" - ")) {
+        cleaned = cleaned.substringBefore(" - ")
+    }
+
+    // 6. 날짜 제거 (릴리즈 날짜: .251124. 등 6자리 또는 8자리 숫자)
+    cleaned = cleaned.replace(Regex("[.\\s_](?:\\d{6}|\\d{8})(?=[.\\s_]|$)"), " ")
+
+    // 7. 에피소드 및 시즌 정보 제거
+    cleaned = cleaned.replace(Regex("(?i)\\.?[Ee]\\d+"), " ") 
+    cleaned = cleaned.replace(Regex("\\d+화|\\d+기|\\d+회|\\d+파트|Season\\s*\\d+|Part\\s*\\d+"), " ")
     
+    // 8. 기술적 정보 및 기타 노이즈 제거
+    val noisePattern = "(?i)\\.?(?:더빙|자막|무삭제|\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|KL|x86|x64|10bit|Multi|REMUX|OVA|OAD|ONA|TV판|극장판|Digital).*"
+    cleaned = cleaned.replace(Regex(noisePattern), "")
+
+    // 9. 제목 끝에 붙은 에피소드 숫자 처리
+    val trailingNumRegex = Regex("\\s(\\d+)(?!\\d)")
+    val match = trailingNumRegex.find(cleaned)
+    if (match != null) {
+        val num = match.groupValues[1].toInt()
+        if (num < 1000) { 
+            cleaned = cleaned.replace(trailingNumRegex, " ")
+        }
+    }
+
+    // 10. 마무리 정리
+    cleaned = cleaned.replace(Regex("[._\\-::!?]"), " ")
     cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
     
-    while (cleaned.endsWith("-") || cleaned.endsWith(".") || cleaned.endsWith("_")) {
-        cleaned = cleaned.dropLast(1).trim()
+    // 11. 보존했던 연도 다시 붙이기 (요청 시에만)
+    if (includeYear && yearStr != null) {
+        cleaned = "$cleaned ($yearStr)"
     }
     
     return cleaned
@@ -173,12 +346,25 @@ fun String.cleanTitle(): String {
 fun String.extractEpisode(): String? {
     val eMatch = Regex("(?i)[Ee](\\d+)").find(this)
     if (eMatch != null) return "${eMatch.groupValues[1].toInt()}화"
+    
+    val hMatch = Regex("(\\d+)화").find(this)
+    if (hMatch != null) return hMatch.groupValues[0]
+
+    val rMatch = Regex("(\\d+)회").find(this)
+    if (rMatch != null) return rMatch.groupValues[0]
+
+    val numMatch = Regex("\\s(\\d+)(?:$|\\.)").find(this)
+    if (numMatch != null) {
+        val num = numMatch.groupValues[1].toInt()
+        if (num < 1000) return "${num}화"
+    }
+    
     return null
 }
 
 fun String.prettyTitle(): String {
     val ep = this.extractEpisode()
-    val base = this.cleanTitle()
+    val base = this.cleanTitle(keepAfterHyphen = true)
     if (ep == null) return base
     return if (base.contains(" - ")) {
         val split = base.split(" - ", limit = 2)
@@ -189,12 +375,12 @@ fun String.prettyTitle(): String {
 }
 
 fun List<Movie>.groupBySeries(): List<Series> {
-    return this.groupBy { it.title.cleanTitle() }
+    return this.groupBy { it.title.cleanTitle(keepAfterHyphen = false) }
         .map { (title, episodes) ->
             Series(
                 title = title,
                 episodes = episodes.sortedBy { it.title },
-                thumbnailUrl = episodes.firstOrNull { it.thumbnailUrl != null }?.thumbnailUrl
+                thumbnailUrl = null
             )
         }
 }
@@ -252,10 +438,8 @@ fun App() {
                     }
                 }
                 Screen.ON_AIR -> {
-                    if (onAirCategories.isEmpty()) {
-                        isLoading = true
-                        onAirCategories = client.get("$BASE_URL/animations").body()
-                    }
+                    isLoading = true
+                    onAirCategories = client.get("$BASE_URL/animations").body()
                 }
                 Screen.ANIMATIONS -> {
                     isLoading = true
@@ -295,60 +479,71 @@ fun App() {
         )
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            
             if (selectedMovie != null) {
                 VideoPlayerScreen(
                     movie = selectedMovie!!,
                     currentScreen = selectedItemScreen,
                     pathStack = currentPathStack
                 ) { selectedMovie = null }
-            } else if (selectedSeries != null || isExplorerSeriesMode) {
-                val categoryTitle = when {
-                    (selectedSeries != null && selectedItemScreen == Screen.ON_AIR) || currentScreen == Screen.ON_AIR -> "라프텔 애니메이션"
-                    (selectedSeries != null && selectedItemScreen == Screen.ANIMATIONS) || currentScreen == Screen.ANIMATIONS -> "애니메이션"
-                    (selectedSeries != null && (selectedItemScreen == Screen.LATEST || selectedItemScreen == Screen.MOVIES)) || currentScreen == Screen.MOVIES -> "영화"
-                    (selectedSeries != null && selectedItemScreen == Screen.FOREIGN_TV) || currentScreen == Screen.FOREIGN_TV -> "외국 TV"
+            } else if (selectedSeries != null) {
+                val categoryTitle = when (selectedItemScreen) {
+                    Screen.ON_AIR -> "라프텔 애니메이션"
+                    Screen.ANIMATIONS -> "애니메이션"
+                    Screen.MOVIES, Screen.LATEST -> "영화"
+                    Screen.FOREIGN_TV -> "외국 TV"
                     else -> ""
                 }
-
-                val seriesData = if (selectedSeries != null) selectedSeries!!
-                else {
-                    val items = when (currentScreen) {
-                        Screen.MOVIES -> movieItems
-                        Screen.ANIMATIONS -> aniItems
-                        else -> foreignTvItems
-                    }
-                    val stack = when (currentScreen) {
-                        Screen.MOVIES -> moviePathStack
-                        Screen.ANIMATIONS -> aniPathStack
-                        else -> foreignTvPathStack
-                    }
-                    val movies = items.flatMap { it.movies }
-                    Series(
-                        title = stack.lastOrNull() ?: "상세보기",
-                        episodes = movies,
-                        thumbnailUrl = movies.firstOrNull()?.thumbnailUrl
-                    )
-                }
                 SeriesDetailScreen(
-                    series = seriesData,
+                    series = selectedSeries!!,
                     categoryTitle = categoryTitle,
-                    currentScreen = if (selectedSeries != null) selectedItemScreen else currentScreen,
+                    currentScreen = selectedItemScreen,
                     pathStack = currentPathStack,
-                    onBack = {
-                        if (selectedSeries != null) {
-                            selectedSeries = null
-                        } else {
+                    onBack = { selectedSeries = null },
+                    onPlayFullScreen = { selectedMovie = it }
+                )
+            } else if (isExplorerSeriesMode) {
+                val items = when (currentScreen) {
+                    Screen.MOVIES -> movieItems
+                    Screen.ANIMATIONS -> aniItems
+                    else -> foreignTvItems
+                }
+                val allSeries = items.flatMap { it.movies }.groupBySeries()
+                val categoryTitle = when (currentScreen) {
+                    Screen.ANIMATIONS -> "애니메이션"
+                    Screen.MOVIES -> "영화"
+                    Screen.FOREIGN_TV -> "외국 TV"
+                    else -> ""
+                }
+                
+                Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                    NasAppBar(
+                        title = currentPathStack.lastOrNull() ?: categoryTitle,
+                        onBack = {
                             when (currentScreen) {
                                 Screen.MOVIES -> moviePathStack = moviePathStack.dropLast(1)
                                 Screen.ANIMATIONS -> aniPathStack = aniPathStack.dropLast(1)
-                                Screen.LATEST -> {} 
                                 else -> foreignTvPathStack = foreignTvPathStack.dropLast(1)
                             }
                         }
-                    },
-                    onPlayFullScreen = { selectedMovie = it }
-                )
+                    )
+                    BoxWithConstraints {
+                        val isTablet = maxWidth > 600.dp
+                        LazyVerticalGrid(
+                            columns = if (isTablet) GridCells.Fixed(4) else GridCells.Fixed(3),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(allSeries) { series ->
+                                SearchGridItem(series, isTablet) { 
+                                    selectedSeries = it
+                                    selectedItemScreen = currentScreen
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 Scaffold(
                     topBar = {
@@ -371,7 +566,6 @@ fun App() {
                             Screen.ANIMATIONS -> aniItems.isEmpty()
                             else -> false
                         }
-                        
                         if (isLoading && isDataEmpty) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.Red) }
                         } else if (errorMessage != null) {
@@ -383,8 +577,7 @@ fun App() {
                                     selectedItemScreen = screen
                                 }
                                 Screen.ON_AIR -> CategoryListScreen(
-                                    title = "방송중", 
-                                    rowTitle = "라프텔 애니메이션",
+                                    title = "방송중",
                                     categories = onAirCategories
                                 ) { series, screen ->
                                     selectedSeries = series
@@ -439,12 +632,9 @@ fun SearchScreen(
     onCategoryChange: (String) -> Unit,
     onSeriesClick: (Series, Screen) -> Unit
 ) {
-    val categories = listOf("전체", "방송중", "애니메이션", "최신영화", "영화", "외국TV")
-    val suggestedKeywords = listOf("짱구", "나혼자만 레벨업", "가족 모집", "최신 영화")
-    
+    val categories = listOf("전체", "방송중", "애니메이션", "영화", "외국TV")
     var searchResults by remember { mutableStateOf<List<Series>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
-    var isDropdownExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, selectedCategory) {
         if (query.isBlank()) {
@@ -452,7 +642,6 @@ fun SearchScreen(
             isSearching = false
             return@LaunchedEffect
         }
-        
         delay(300)
         isSearching = true
         try {
@@ -473,15 +662,8 @@ fun SearchScreen(
             value = query,
             onValueChange = onQueryChange,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            placeholder = { Text("제목, 장르, 시리즈 검색", color = Color.Gray) },
+            placeholder = { Text("검색", color = Color.Gray) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray) },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
-                    }
-                }
-            },
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color(0xFF333333),
                 unfocusedContainerColor = Color(0xFF333333),
@@ -495,60 +677,13 @@ fun SearchScreen(
             singleLine = true
         )
 
-        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).wrapContentSize(Alignment.TopStart)) {
-            Surface(
-                onClick = { isDropdownExpanded = true },
-                color = Color(0xFF2B2B2B),
-                shape = RoundedCornerShape(4.dp),
-                border = BorderStroke(1.dp, Color.DarkGray.copy(alpha = 0.5f))
-            ) {
-                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "카테고리: $selectedCategory", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(8.dp))
-                    Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                }
-            }
-
-            DropdownMenu(
-                expanded = isDropdownExpanded,
-                onDismissRequest = { isDropdownExpanded = false },
-                modifier = Modifier.background(Color(0xFF1F1F1F)).border(1.dp, Color.DarkGray, RoundedCornerShape(4.dp))
-            ) {
-                categories.forEach { category ->
-                    DropdownMenuItem(
-                        text = { Text(text = category, color = if (selectedCategory == category) Color.Red else Color.White, fontWeight = if (selectedCategory == category) FontWeight.Bold else FontWeight.Normal, fontSize = 15.sp) },
-                        onClick = { onCategoryChange(category); isDropdownExpanded = false }
-                    )
-                }
-            }
-        }
-
-        Box(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+        Box(modifier = Modifier.fillMaxSize()) {
             if (isSearching) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = Color.Red)
-            } else if (query.isEmpty()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("추천 검색어", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    Spacer(Modifier.height(12.dp))
-                    FlowRow(mainAxisSpacing = 8.dp, crossAxisSpacing = 8.dp) {
-                        suggestedKeywords.forEach { keyword ->
-                            SuggestionChip(
-                                onClick = { onQueryChange(keyword) },
-                                label = { Text(keyword, fontSize = 14.sp) },
-                                shape = CircleShape,
-                                colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Color(0xFF1A1A1A), labelColor = Color.LightGray),
-                                border = BorderStroke(1.dp, Color.DarkGray)
-                            )
-                        }
-                    }
-                }
-            } else if (searchResults.isEmpty()) {
-                Text("검색 결과가 없습니다", color = Color.Gray, fontSize = 16.sp, modifier = Modifier.align(Alignment.Center))
             } else {
                 val screen = when (selectedCategory) {
                     "방송중" -> Screen.ON_AIR
                     "애니메이션" -> Screen.ANIMATIONS
-                    "최신영화" -> Screen.LATEST
                     "영화" -> Screen.MOVIES
                     "외국TV" -> Screen.FOREIGN_TV
                     else -> Screen.HOME
@@ -558,12 +693,12 @@ fun SearchScreen(
                     LazyVerticalGrid(
                         columns = if (isTablet) GridCells.Fixed(4) else GridCells.Fixed(3),
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
+                        contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(searchResults) { series ->
-                            SearchGridItem(series, screen, isTablet) { onSeriesClick(it, screen) }
+                            SearchGridItem(series, isTablet) { onSeriesClick(it, screen) }
                         }
                     }
                 }
@@ -573,28 +708,21 @@ fun SearchScreen(
 }
 
 @Composable
-fun SearchGridItem(series: Series, screen: Screen, isTablet: Boolean, onSeriesClick: (Series) -> Unit) {
-    Card(modifier = Modifier.aspectRatio(2f/3f).clickable { onSeriesClick(series) }, shape = RoundedCornerShape(4.dp)) {
+fun SearchGridItem(series: Series, isTablet: Boolean, onSeriesClick: (Series) -> Unit) {
+    Card(modifier = Modifier.aspectRatio(0.67f).clickable { onSeriesClick(series) }, shape = RoundedCornerShape(4.dp)) {
         Box(Modifier.fillMaxSize()) {
-            val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(screen, emptyList(), it) }
-            AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current)
-                    .data(thumbUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+            TmdbAsyncImage(
+                title = series.title,
+                modifier = Modifier.fillMaxSize()
             )
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f)))))
             Text(
                 text = series.title, 
                 color = Color.White, 
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 12.dp, end = 8.dp), 
                 style = TextStyle(
-                    fontSize = if (isTablet) 40.sp else 18.sp, 
-                    fontWeight = FontWeight.Bold,
-                    shadow = Shadow(color = Color.Black, blurRadius = 12f)
+                    fontSize = if (isTablet) 24.sp else 14.sp, 
+                    fontWeight = FontWeight.Bold
                 ), 
                 maxLines = 2, 
                 overflow = TextOverflow.Ellipsis
@@ -621,47 +749,13 @@ fun MovieExplorer(
             contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 100.dp) 
         ) {
             items(items) { item ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clickable { onFolderClick(item.name) },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1F1F1F))
-                ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = RoundedCornerShape(6.dp), color = Color.White.copy(alpha = 0.1f), modifier = Modifier.size(40.dp)) {
-                            Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Color.White, modifier = Modifier.padding(8.dp))
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Text(text = item.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.weight(1f))
-                        Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.DarkGray)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun FlowRow(mainAxisSpacing: androidx.compose.ui.unit.Dp, crossAxisSpacing: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
-    androidx.compose.ui.layout.Layout(content = content) { measurables, constraints ->
-        val placeholders = measurables.map { it.measure(constraints.copy(minWidth = 0)) }
-        val rows = mutableListOf<List<androidx.compose.ui.layout.Placeable>>()
-        var currentRow = mutableListOf<androidx.compose.ui.layout.Placeable>()
-        var currentRowWidth = 0
-        placeholders.forEach { placeable ->
-            if (currentRowWidth + placeable.width + mainAxisSpacing.roundToPx() > constraints.maxWidth && currentRow.isNotEmpty()) {
-                rows.add(currentRow); currentRow = mutableListOf(); currentRowWidth = 0
-            }
-            currentRow.add(placeable); currentRowWidth += placeable.width + mainAxisSpacing.roundToPx()
-        }
-        rows.add(currentRow)
-        val height = rows.sumOf { it.maxOf { p -> p.height } + crossAxisSpacing.roundToPx() }
-        layout(constraints.maxWidth, height) {
-            var y = 0
-            rows.forEach { row ->
-                var x = 0
-                row.forEach { placeable -> placeable.placeRelative(x, y); x += placeable.width + mainAxisSpacing.roundToPx() }
-                y += row.maxOf { it.height } + crossAxisSpacing.roundToPx()
+                ListItem(
+                    headlineContent = { Text(text = item.name, color = Color.White) },
+                    leadingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Color.White) },
+                    trailingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.DarkGray) },
+                    modifier = Modifier.clickable { onFolderClick(item.name) },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
             }
         }
     }
@@ -683,14 +777,7 @@ fun HomeScreen(latest: List<Category>, ani: List<Category>, onSeriesClick: (Seri
             val aniMovies = ani.flatMap { it.movies }
             val all = latestMovies + aniMovies
             val heroMovie = all.firstOrNull()
-            
-            val heroScreen = if (heroMovie != null && latestMovies.any { it.id == heroMovie.id }) {
-                Screen.LATEST
-            } else {
-                Screen.ON_AIR
-            }
-
-            HeroSection(heroMovie, heroScreen) { movie -> 
+            HeroSection(heroMovie) { movie -> 
                 val isLatest = latestMovies.any { it.id == movie.id }
                 val screen = if (isLatest) Screen.LATEST else Screen.ON_AIR
                 all.groupBySeries().find { it.episodes.any { ep -> ep.id == movie.id } }?.let { onSeriesClick(it, screen) } 
@@ -704,21 +791,26 @@ fun HomeScreen(latest: List<Category>, ani: List<Category>, onSeriesClick: (Seri
 @Composable
 fun CategoryListScreen(
     title: String, 
-    rowTitle: String,
     categories: List<Category>, 
     onSeriesClick: (Series, Screen) -> Unit
 ) {
+    val allSeries = categories.flatMap { it.movies }.groupBySeries()
+    
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = title)
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) { 
-            item { 
-                MovieRow(
-                    title = rowTitle, 
-                    screen = Screen.ON_AIR,
-                    seriesList = categories.flatMap { it.movies }.groupBySeries(), 
-                    onSeriesClick = onSeriesClick
-                ) 
-            } 
+        BoxWithConstraints {
+            val isTablet = maxWidth > 600.dp
+            LazyVerticalGrid(
+                columns = if (isTablet) GridCells.Fixed(4) else GridCells.Fixed(3),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(allSeries) { series ->
+                    SearchGridItem(series, isTablet) { onSeriesClick(it, Screen.ON_AIR) }
+                }
+            }
         }
     }
 }
@@ -726,41 +818,28 @@ fun CategoryListScreen(
 @Composable
 fun MovieRow(title: String, screen: Screen, seriesList: List<Series>, onSeriesClick: (Series, Screen) -> Unit) {
     if (seriesList.isEmpty()) return
-    BoxWithConstraints {
-        val isTablet = maxWidth > 600.dp
-        val itemWidth = if (isTablet) 200.dp else 120.dp
-        val itemHeight = if (isTablet) 300.dp else 180.dp
-
-        Column(modifier = Modifier.padding(vertical = 12.dp)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, fontSize = 22.sp), color = Color.White, modifier = Modifier.padding(start = 16.dp, bottom = 12.dp))
-            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(seriesList) { series ->
-                    Card(modifier = Modifier.width(itemWidth).height(itemHeight).clickable { onSeriesClick(series, screen) }, shape = RoundedCornerShape(4.dp)) {
-                        Box(Modifier.fillMaxSize()) {
-                            val thumbUrl = series.episodes.firstOrNull()?.let { createThumbServeUrl(screen, emptyList(), it) }
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(thumbUrl)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                            Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))))
-                            Text(
-                                text = series.title, 
-                                color = Color.White, 
-                                modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 12.dp, end = 8.dp), 
-                                style = TextStyle(
-                                    fontSize = if (isTablet) 32.sp else 14.sp, 
-                                    fontWeight = FontWeight.Bold, 
-                                    shadow = Shadow(color = Color.Black, blurRadius = 10f)
-                                ), 
-                                maxLines = 2, 
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+    Column(modifier = Modifier.padding(vertical = 12.dp)) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, fontSize = 22.sp), color = Color.White, modifier = Modifier.padding(start = 16.dp, bottom = 12.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(seriesList) { series ->
+                Card(modifier = Modifier.width(120.dp).height(180.dp).clickable { onSeriesClick(series, screen) }, shape = RoundedCornerShape(4.dp)) {
+                    Box(Modifier.fillMaxSize()) {
+                        TmdbAsyncImage(
+                            title = series.title,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)))))
+                        Text(
+                            text = series.title, 
+                            color = Color.White, 
+                            modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 12.dp, end = 8.dp), 
+                            style = TextStyle(
+                                fontSize = 12.sp, 
+                                fontWeight = FontWeight.Bold
+                            ), 
+                            maxLines = 2, 
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -779,15 +858,12 @@ fun SeriesDetailScreen(
 ) {
     val scope = rememberCoroutineScope()
     var playingMovie by remember(series) { mutableStateOf(series.episodes.firstOrNull()) }
-
-    // 화면을 벗어날 때 자동으로 서버에 중지 요청
     DisposableEffect(Unit) {
         onDispose {
             scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} }
         }
     }
-
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black).navigationBarsPadding()) {
+    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = categoryTitle, onBack = onBack)
         Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) {
             playingMovie?.let { movie -> 
@@ -802,15 +878,9 @@ fun SeriesDetailScreen(
                     headlineContent = { Text(text = ep.title.extractEpisode() ?: ep.title.cleanTitle(), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
                         Box(modifier = Modifier.width(120.dp).height(68.dp).background(Color(0xFF1A1A1A))) {
-                            val thumbUrl = createThumbServeUrl(currentScreen, pathStack, ep)
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(thumbUrl)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
+                            TmdbAsyncImage(
+                                title = ep.title,
+                                modifier = Modifier.fillMaxSize()
                             )
                             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.align(Alignment.Center).size(28.dp))
                         }
@@ -826,14 +896,11 @@ fun SeriesDetailScreen(
 @Composable
 fun VideoPlayerScreen(movie: Movie, currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-
-    // 화면을 벗어날 때 자동으로 서버에 중지 요청
     DisposableEffect(Unit) {
         onDispose {
             scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} }
         }
     }
-
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         val finalUrl = createVideoServeUrl(currentScreen, pathStack, movie)
         VideoPlayer(finalUrl, Modifier.fillMaxSize())
@@ -844,76 +911,30 @@ fun VideoPlayerScreen(movie: Movie, currentScreen: Screen, pathStack: List<Strin
 }
 
 @Composable
-fun HeroSection(movie: Movie?, screen: Screen, onPlayClick: (Movie) -> Unit) {
+fun HeroSection(movie: Movie?, onPlayClick: (Movie) -> Unit) {
     if (movie == null) return
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        val isTablet = maxWidth > 600.dp
-        val horizontalPadding = if (isTablet) maxWidth * 0.25f else 24.dp
-        val aspectRatio = 0.7f
-
+    Box(modifier = Modifier.fillMaxWidth().height(400.dp).clickable { onPlayClick(movie) }) {
+        TmdbAsyncImage(
+            title = movie.title,
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black))))
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(aspectRatio)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF1A1A1A))
-                    .clickable { onPlayClick(movie) }
+            Text(
+                text = movie.title.cleanTitle(),
+                color = Color.White,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { onPlayClick(movie) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White)
             ) {
-                val thumbUrl = createThumbServeUrl(screen, emptyList(), movie)
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(thumbUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.4f to Color.Transparent,
-                                1f to Color.Black.copy(alpha = 0.95f)
-                            )
-                        )
-                )
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = if (isTablet) 32.dp else 24.dp, start = 16.dp, end = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = movie.title.prettyTitle(),
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                        style = TextStyle(
-                            fontSize = if (isTablet) 42.sp else 24.sp,
-                            fontWeight = FontWeight.Black,
-                            shadow = Shadow(color = Color.Black, blurRadius = 15f)
-                        ),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(if (isTablet) 12.dp else 12.dp))
-                    Button(
-                        onClick = { onPlayClick(movie) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
-                        modifier = Modifier.height(if (isTablet) 44.dp else 44.dp)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("재생", color = Color.Black, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-                    }
-                }
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                Text("재생", color = Color.Black)
             }
         }
     }
@@ -922,80 +943,35 @@ fun HeroSection(movie: Movie?, screen: Screen, onPlayClick: (Movie) -> Unit) {
 @Composable
 fun NetflixTopBar(currentScreen: Screen, onScreenSelected: (Screen) -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "N", 
-            color = Color.Red, 
-            fontSize = 32.sp, 
-            fontWeight = FontWeight.Black, 
-            modifier = Modifier.clickable { onScreenSelected(Screen.HOME) }
-        )
+        Text(text = "N", color = Color.Red, fontSize = 32.sp, fontWeight = FontWeight.Black, modifier = Modifier.clickable { onScreenSelected(Screen.HOME) })
         Spacer(modifier = Modifier.width(20.dp))
-        Text(text = "방송중", color = if (currentScreen == Screen.ON_AIR) Color.White else Color.LightGray.copy(alpha = 0.7f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = if (currentScreen == Screen.ON_AIR) FontWeight.Bold else FontWeight.Medium, fontSize = 17.sp), modifier = Modifier.clickable { onScreenSelected(Screen.ON_AIR) }); Spacer(modifier = Modifier.width(16.dp))
-        Text(text = "애니메이션", color = if (currentScreen == Screen.ANIMATIONS) Color.White else Color.LightGray.copy(alpha = 0.7f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = if (currentScreen == Screen.ANIMATIONS) FontWeight.Bold else FontWeight.Medium, fontSize = 17.sp), modifier = Modifier.clickable { onScreenSelected(Screen.ANIMATIONS) }); Spacer(modifier = Modifier.width(16.dp))
-        Text(text = "영화", color = if (currentScreen == Screen.MOVIES) Color.White else Color.LightGray.copy(alpha = 0.7f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = if (currentScreen == Screen.MOVIES) FontWeight.Bold else FontWeight.Medium, fontSize = 17.sp), modifier = Modifier.clickable { onScreenSelected(Screen.MOVIES) }); Spacer(modifier = Modifier.width(16.dp))
-        Text(text = "외국 TV", color = if (currentScreen == Screen.FOREIGN_TV) Color.White else Color.LightGray.copy(alpha = 0.7f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = if (currentScreen == Screen.FOREIGN_TV) FontWeight.Bold else FontWeight.Medium, fontSize = 17.sp), modifier = Modifier.clickable { onScreenSelected(Screen.FOREIGN_TV) })
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            listOf("방송중" to Screen.ON_AIR, "애니" to Screen.ANIMATIONS, "영화" to Screen.MOVIES, "외국 TV" to Screen.FOREIGN_TV).forEach { (label, screen) ->
+                Text(
+                    text = label, 
+                    color = if (currentScreen == screen) Color.White else Color.Gray,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.clickable { onScreenSelected(screen) }
+                )
+            }
+        }
     }
 }
 
 @Composable
 fun NetflixBottomNavigation(currentScreen: Screen, onScreenSelected: (Screen) -> Unit) {
-    NavigationBar(
-        containerColor = Color.Black, 
-        contentColor = Color.White, 
-        modifier = Modifier.height(72.dp),
-        windowInsets = WindowInsets(0, 0, 0, 0)
-    ) {
+    NavigationBar(containerColor = Color.Black, contentColor = Color.White) {
         NavigationBarItem(
             selected = currentScreen == Screen.HOME, 
             onClick = { onScreenSelected(Screen.HOME) }, 
-            icon = { 
-                Icon(
-                    imageVector = Icons.Default.Home, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(24.dp).offset(y = 2.dp)
-                ) 
-            }, 
-            label = { 
-                Text(
-                    text = "홈", 
-                    fontSize = 12.sp, 
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.offset(y = (-6).dp)
-                ) 
-            }, 
-            colors = NavigationBarItemDefaults.colors(
-                indicatorColor = Color.Transparent, 
-                selectedIconColor = Color.White, 
-                unselectedIconColor = Color.Gray, 
-                selectedTextColor = Color.White, 
-                unselectedTextColor = Color.Gray
-            )
+            icon = { Icon(Icons.Default.Home, contentDescription = null) }, 
+            label = { Text(text = "홈") }
         )
         NavigationBarItem(
             selected = currentScreen == Screen.SEARCH, 
             onClick = { onScreenSelected(Screen.SEARCH) }, 
-            icon = { 
-                Icon(
-                    imageVector = Icons.Default.Search, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(24.dp).offset(y = 2.dp)
-                ) 
-            }, 
-            label = { 
-                Text(
-                    text = "검색", 
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.offset(y = (-6).dp)
-                ) 
-            }, 
-            colors = NavigationBarItemDefaults.colors(
-                indicatorColor = Color.Transparent, 
-                selectedIconColor = Color.White, 
-                unselectedIconColor = Color.Gray, 
-                selectedTextColor = Color.White, 
-                unselectedTextColor = Color.Gray
-            )
+            icon = { Icon(Icons.Default.Search, contentDescription = null) }, 
+            label = { Text(text = "검색") }
         )
     }
 }
@@ -1008,5 +984,3 @@ fun ErrorView(message: String, onRetry: () -> Unit) {
         }
     }
 }
-
-fun PlaceholderScreen(title: String) {}
