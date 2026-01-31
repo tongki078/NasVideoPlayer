@@ -59,19 +59,20 @@ const val TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3OGNiYWQ0ZjQ3NzcwYjYyY
 const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
 const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342" 
 
-// Pre-compiled regex for performance
+// --- Regex Pre-compilation ---
 private val REGEX_YEAR = Regex("\\((19|20)\\d{2}\\)|(?<!\\d)(19|20)\\d{2}(?!\\d)")
 private val REGEX_BRACKETS = Regex("\\[.*?\\]|\\(.*?\\)")
 private val REGEX_EPISODE_E = Regex("(?i)[Ee](\\d+)")
-private val REGEX_EPISODE_K = Regex("(\\d+)(?:화|회)")
-private val REGEX_EPISODE_NUM = Regex("\\s(\\d+)(?:$|\\.)")
+private val REGEX_EPISODE_K = Regex("(\\d+)\\s*(?:화|회)")
+private val REGEX_EPISODE_NUM = Regex("[.\\s_](\\d+)(?:$|[.\\s_])")
 private val REGEX_SEASON_S = Regex("(?i)[Ss](\\d+)")
-private val REGEX_SEASON_G = Regex("(\\d+)기")
-private val REGEX_NOISE = Regex("(?i)\\.?(?:더빙|자막|무삭제|\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|KL|x86|x64|10bit|Multi|REMUX|OVA|OAD|ONA|TV판|극장판|Digital).*")
+private val REGEX_SEASON_G = Regex("(\\d+)\\s*기")
+private val REGEX_SERIES_CUTOFF = Regex("(?i)[.\\s_](?:S\\d+E\\d+|S\\d+|E\\d+|\\d+\\s*(?:화|회|기)|Season\\s*\\d+|Part\\s*\\d+).*")
+private val REGEX_NOISE = Regex("(?i)[.\\s_](?:더빙|자막|무삭제|\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|10bit|REMUX|OVA|OAD|ONA|TV판|극장판).*")
 private val REGEX_DATE_NOISE = Regex("[.\\s_](?:\\d{6}|\\d{8})(?=[.\\s_]|$)")
-private val REGEX_CLEAN_EXTRA = Regex("(?i)\\.?[Ee]\\d+|\\d+화|\\d+기|\\d+회|\\d+파트|Season\\s*\\d+|Part\\s*\\d+")
-private val REGEX_TRAILING_NUM = Regex("\\s(\\d+)(?!\\d)")
-private val REGEX_SYMBOLS = Regex("[._\\-::!?]")
+private val REGEX_CLEAN_EXTRA = Regex("(?i)\\.?[Ee]\\d+|\\d+\\s*(?:화|기|회|파트)|Season\\s*\\d+|Part\\s*\\d+")
+private val REGEX_TRAILING_NUM = Regex("[.\\s_](\\d+)$")
+private val REGEX_SYMBOLS = Regex("[._\\-::!?【】『』「」\"'#@*※]")
 private val REGEX_WHITESPACE = Regex("\\s+")
 private val REGEX_KOR_ENG = Regex("([가-힣])([a-zA-Z0-9])")
 private val REGEX_ENG_KOR = Regex("([a-zA-Z0-9])([가-힣])")
@@ -100,37 +101,53 @@ val client = HttpClient {
 private val tmdbCache = mutableMapOf<String, TmdbMetadata>()
 private val tmdbSemaphore = Semaphore(5)
 
+fun Char.isHangul(): Boolean = 
+    this in '\uAC00'..'\uD7A3' || 
+    this in '\u1100'..'\u11FF' || 
+    this in '\u3130'..'\u318F' || 
+    this in '\uA960'..'\uA97F' || 
+    this in '\uD7B0'..'\uD7FF'
+
 suspend fun fetchTmdbMetadata(title: String): TmdbMetadata {
     if (TMDB_API_KEY.isBlank() || TMDB_API_KEY == "YOUR_TMDB_API_KEY") return TmdbMetadata()
     tmdbCache[title]?.let { return it }
+
+    val year = REGEX_YEAR.find(title)?.value?.replace("(", "")?.replace(")", "")
     val cleanTitle = title.cleanTitle(includeYear = false)
-    val year = REGEX_YEAR.find(title)?.value
+    
     val strategies = mutableListOf<String>()
-    if (cleanTitle.isNotEmpty()) { strategies.add(cleanTitle); if (year != null) strategies.add("$cleanTitle $year") }
-    val rawClean = title.substringBeforeLast('.').let { REGEX_BRACKETS.replace(it, " ") }.let { REGEX_WHITESPACE.replace(it, " ") }.trim()
-    if (rawClean.isNotEmpty() && rawClean != cleanTitle) strategies.add(rawClean)
+    
+    // 1. 한글 및 숫자 제목 추출 (가장 정확)
+    val korTitle = cleanTitle.filter { it.isWhitespace() || it.isHangul() || it.isDigit() }.trim().replace(Regex("\\s+"), " ")
+    if (korTitle.length >= 2) strategies.add(korTitle)
+    
+    // 2. 전체 클린 타이틀
+    if (cleanTitle.isNotEmpty()) strategies.add(cleanTitle)
+    
+    // 3. 영어/숫자 제목만 추출
+    val engTitle = cleanTitle.filter { it.isWhitespace() || it.isLetterOrDigit() || it in ".,-!?" }
+        .filter { !it.isHangul() }.trim().replace(Regex("\\s+"), " ")
+    if (engTitle.length >= 3 && engTitle != cleanTitle) strategies.add(engTitle)
+    
+    // 4. 연도 조합 전략
+    if (year != null) {
+        val baseStrats = strategies.toList()
+        baseStrats.forEach { strategies.add("$it $year") }
+    }
+    
+    val queryList = strategies.filter { it.isNotBlank() }.distinct()
     var finalMetadata: TmdbMetadata? = null
     var hasNetworkError = false
-    for (query in strategies.distinct()) {
-        val (res, error) = searchTmdb(query, "ko-KR")
-        if (error != null) { hasNetworkError = true; break }
-        var result = res
-        if (result == null) {
-            val (resEn, errorEn) = searchTmdb(query, null)
-            if (errorEn != null) { hasNetworkError = true; break }
-            result = resEn
-        }
-        if (result != null) { finalMetadata = result; break }
-    }
-    if (finalMetadata == null && !hasNetworkError && cleanTitle.split(" ").size >= 2) {
-        val words = cleanTitle.split(" ").filter { it.isNotBlank() }
-        for (i in (words.size - 1) downTo 1) {
-            val shortQuery = words.take(i).joinToString(" ")
-            if (shortQuery.length < 2) continue
-            val (res, _) = searchTmdb(shortQuery, "ko-KR")
+    
+    for (query in queryList) {
+        for (lang in listOf("ko-KR", null)) {
+            val (res, error) = searchTmdb(query, lang)
+            if (error != null) { hasNetworkError = true; break }
             if (res != null) { finalMetadata = res; break }
         }
+        if (finalMetadata != null || hasNetworkError) break
     }
+
     val result = finalMetadata ?: TmdbMetadata()
     if (!hasNetworkError) tmdbCache[title] = result
     return result
@@ -239,13 +256,22 @@ fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = t
     val yearStr = yearMatch?.value?.replace("(", "")?.replace(")", "")
     if (yearMatch != null) cleaned = cleaned.replace(yearMatch.value, " ")
     cleaned = REGEX_BRACKETS.replace(cleaned, " ")
+
+    if (!keepAfterHyphen) {
+        cleaned = REGEX_SERIES_CUTOFF.replace(cleaned, "")
+    }
+
     if (!keepAfterHyphen && cleaned.contains(" - ")) cleaned = cleaned.substringBefore(" - ")
     cleaned = REGEX_DATE_NOISE.replace(cleaned, " ")
+    cleaned = Regex("(?i)\\.?[Ss]\\d+").replace(cleaned, " ")
     cleaned = REGEX_CLEAN_EXTRA.replace(cleaned, " ")
     cleaned = REGEX_NOISE.replace(cleaned, "")
-    val match = REGEX_TRAILING_NUM.find(cleaned)
-    if (match != null && match.groupValues[1].toInt() < 1000) cleaned = cleaned.replace(REGEX_TRAILING_NUM, " ")
     cleaned = REGEX_SYMBOLS.replace(cleaned, " ")
+    val match = REGEX_TRAILING_NUM.find(" $cleaned")
+    if (match != null) {
+        val num = match.groupValues[1].toInt()
+        if (num < 1000) { cleaned = cleaned.replace(Regex("${match.groupValues[1]}$"), "") }
+    }
     cleaned = REGEX_WHITESPACE.replace(cleaned, " ").trim()
     if (includeYear && yearStr != null) cleaned = "$cleaned ($yearStr)"
     return cleaned
@@ -275,7 +301,15 @@ fun String.prettyTitle(): String {
 }
 
 fun List<Movie>.groupBySeries(): List<Series> = this.groupBy { it.title.cleanTitle(keepAfterHyphen = false) }
-    .map { (title, episodes) -> Series(title = title, episodes = episodes.sortedBy { it.title }, thumbnailUrl = null) }
+    .map { (title, episodes) -> 
+        val sortedEpisodes = episodes.sortedWith(
+            compareBy<Movie> { it.title.extractSeason() }
+                .thenBy { it.title.extractEpisode()?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 0 }
+                .thenBy { it.title }
+        )
+        Series(title = title, episodes = sortedEpisodes, thumbnailUrl = null) 
+    }
+    .sortedBy { it.title }
 
 @Composable
 fun App() {
@@ -396,8 +430,6 @@ fun App() {
                 val catTitle = when (selectedItemScreen) { Screen.ON_AIR -> selectedOnAirTab; Screen.ANIMATIONS -> "애니메이션"; Screen.MOVIES, Screen.LATEST -> "영화"; Screen.FOREIGN_TV -> "외국 TV"; else -> "" }
                 SeriesDetailScreen(series = selectedSeries!!, categoryTitle = catTitle, currentScreen = selectedItemScreen, pathStack = currentPathStack, onBack = { selectedSeries = null }, onPlayFullScreen = { selectedMovie = it })
             } else if (isExplorerSeriesMode) {
-                val items = when (currentScreen) { Screen.MOVIES -> movieItems; Screen.ANIMATIONS -> aniItems; else -> foreignTvItems }
-                val allSeries = remember(items) { items.flatMap { it.movies }.groupBySeries() }
                 val catTitle = when (currentScreen) { Screen.ANIMATIONS -> "애니메이션"; Screen.MOVIES -> "영화"; Screen.FOREIGN_TV -> "외국 TV"; else -> "" }
                 Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     NasAppBar(title = currentPathStack.lastOrNull() ?: catTitle, onBack = {
@@ -406,7 +438,7 @@ fun App() {
                     BoxWithConstraints {
                         val columns = if (maxWidth > 600.dp) GridCells.Fixed(4) else GridCells.Fixed(3)
                         LazyVerticalGrid(columns = columns, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(allSeries) { series -> SearchGridItem(series) { selectedSeries = it; selectedItemScreen = currentScreen } }
+                            items(explorerSeries) { series -> SearchGridItem(series) { selectedSeries = it; selectedItemScreen = currentScreen } }
                         }
                     }
                 }
