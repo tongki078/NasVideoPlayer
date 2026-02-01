@@ -1,16 +1,24 @@
 package org.nas.videoplayer
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,6 +32,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -55,12 +64,14 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonArray
 import org.nas.videoplayer.data.*
 import org.nas.videoplayer.db.AppDatabase
 import com.squareup.sqldelight.db.SqlDriver
 
 const val BASE_URL = "http://192.168.0.2:5000"
-const val IPHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+const val IPHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, lifestyle Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
 const val TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3OGNiYWQ0ZjQ3NzcwYjYyYmZkMTcwNTA2NDIwZDQyYyIsIm5iZiI6MTY1MzY3NTU4MC45MTUsInN1YiI6IjYyOTExNjNjMTI0MjVjMDA1MjI0ZGQzNCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3YU0WuIx_WDo6nTRKehRtn4N5I4uCgjI1tlpkqfsUhk"
 const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
@@ -94,8 +105,29 @@ data class TmdbSearchResponse(val results: List<TmdbResult>)
 @Serializable
 data class TmdbResult(val id: Int, @SerialName("poster_path") val posterPath: String? = null, @SerialName("backdrop_path") val backdropPath: String? = null, val name: String? = null, val title: String? = null, @SerialName("media_type") val mediaType: String? = null, val overview: String? = null)
 data class TmdbMetadata(val tmdbId: Int? = null, val mediaType: String? = null, val posterUrl: String? = null, val overview: String? = null)
+
 @Serializable
-data class TmdbEpisodeResponse(val overview: String? = null, @SerialName("still_path") val stillPath: String? = null)
+data class TmdbEpisode(
+    @SerialName("episode_number") val episodeNumber: Int,
+    var overview: String? = null,
+    @SerialName("still_path") val stillPath: String? = null,
+    val name: String? = null
+)
+
+@Serializable
+data class TmdbSeasonResponse(val episodes: List<TmdbEpisode>)
+
+@Serializable
+data class TmdbCreditsResponse(val cast: List<TmdbCast>)
+@Serializable
+data class TmdbCast(
+    val name: String, 
+    @SerialName("roles") val roles: List<TmdbRole>? = null, // TV Aggregate용
+    val character: String? = null, // Movie/Standard용
+    @SerialName("profile_path") val profilePath: String? = null
+)
+@Serializable
+data class TmdbRole(val character: String, @SerialName("episode_count") val episodeCount: Int)
 
 enum class Screen { HOME, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, KOREAN_TV, SEARCH, LATEST }
 
@@ -106,6 +138,23 @@ val client = HttpClient {
 }
 
 private val tmdbCache = mutableMapOf<String, TmdbMetadata>()
+
+// --- 번역 관련 유틸리티 ---
+fun String.containsKorean(): Boolean = any { it.isHangul() }
+
+suspend fun translateToKorean(text: String): String {
+    if (text.isBlank() || text.containsKorean()) return text
+    return try {
+        val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=${text.encodeURLParameter()}"
+        val response: String = client.get(url).body()
+        val jsonArray = Json.parseToJsonElement(response).jsonArray
+        val translatedParts = jsonArray[0].jsonArray
+        translatedParts.joinToString("") { it.jsonArray[0].toString().replace("\"", "") }
+    } catch (e: Exception) {
+        println("Translation Error: ${e.message}")
+        text
+    }
+}
 
 suspend fun fetchTmdbMetadata(title: String): TmdbMetadata {
     if (TMDB_API_KEY.isBlank() || TMDB_API_KEY == "YOUR_TMDB_API_KEY") return TmdbMetadata()
@@ -151,30 +200,57 @@ suspend fun fetchTmdbMetadata(title: String): TmdbMetadata {
         if (finalMetadata != null || hasNetworkError) break
     }
 
-    val result = finalMetadata ?: TmdbMetadata()
+    var result = finalMetadata ?: TmdbMetadata()
+    
+    // 메인 줄거리가 영어면 번역 시도
+    if (!result.overview.isNullOrBlank() && !result.overview!!.containsKorean()) {
+        result = result.copy(overview = translateToKorean(result.overview!!))
+    }
+
     if (!hasNetworkError) tmdbCache[title] = result
     return result
 }
 
-suspend fun fetchTmdbEpisodeOverview(tmdbId: Int, season: Int, episode: Int): String? {
+suspend fun fetchTmdbSeasonDetails(tmdbId: Int, season: Int): List<TmdbEpisode> {
     return try {
-        val response: TmdbEpisodeResponse = client.get("$TMDB_BASE_URL/tv/$tmdbId/season/$season/episode/$episode") {
+        val responseKo: TmdbSeasonResponse = client.get("$TMDB_BASE_URL/tv/$tmdbId/season/$season") {
             if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
             else parameter("api_key", TMDB_API_KEY)
             parameter("language", "ko-KR")
         }.body()
-        if (!response.overview.isNullOrBlank()) response.overview else fetchTmdbEpisodeOverviewEn(tmdbId, season, episode)
-    } catch (e: Exception) { null }
+        
+        var episodes = if (responseKo.episodes.all { it.overview.isNullOrBlank() }) {
+            val responseEn: TmdbSeasonResponse = client.get("$TMDB_BASE_URL/tv/$tmdbId/season/$season") {
+                if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
+                else parameter("api_key", TMDB_API_KEY)
+            }.body()
+            responseEn.episodes
+        } else responseKo.episodes
+
+        // 개별 에피소드 줄거리 번역 (비동기 병렬 처리)
+        coroutineScope {
+            episodes.forEach { ep ->
+                if (!ep.overview.isNullOrBlank() && !ep.overview!!.containsKorean()) {
+                    launch { ep.overview = translateToKorean(ep.overview!!) }
+                }
+            }
+        }
+        
+        episodes
+    } catch (e: Exception) { emptyList() }
 }
 
-private suspend fun fetchTmdbEpisodeOverviewEn(tmdbId: Int, season: Int, episode: Int): String? {
+suspend fun fetchTmdbCredits(tmdbId: Int, mediaType: String?): List<TmdbCast> {
+    if (tmdbId == 0 || mediaType == null) return emptyList()
     return try {
-        val response: TmdbEpisodeResponse = client.get("$TMDB_BASE_URL/tv/$tmdbId/season/$season/episode/$episode") {
+        val isTv = mediaType == "tv"
+        val endpoint = if (isTv) "$TMDB_BASE_URL/tv/$tmdbId/aggregate_credits" else "$TMDB_BASE_URL/movie/$tmdbId/credits"
+        val response: TmdbCreditsResponse = client.get(endpoint) {
             if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
             else parameter("api_key", TMDB_API_KEY)
         }.body()
-        response.overview
-    } catch (e: Exception) { null }
+        response.cast.take(30)
+    } catch (e: Exception) { emptyList() }
 }
 
 private suspend fun searchTmdb(query: String, language: String?): Pair<TmdbMetadata?, Exception?> {
@@ -346,6 +422,14 @@ fun App(driver: SqlDriver) {
 
     val scope = rememberCoroutineScope()
 
+    // --- 스크롤 상태 주입 (뒤로 가기 시 위치 복원용) ---
+    val homeScrollState = rememberLazyListState()
+    val onAirScrollState = rememberLazyGridState()
+    val animationsScrollState = rememberLazyListState()
+    val moviesScrollState = rememberLazyListState()
+    val foreignTvScrollState = rememberLazyListState()
+    val koreanTvScrollState = rememberLazyListState()
+
     var homeLatestSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
     var onAirSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
     var onAirDramaSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
@@ -372,6 +456,7 @@ fun App(driver: SqlDriver) {
     
     var selectedMovie by remember { mutableStateOf<Movie?>(null) }
     var moviePlaylist by remember { mutableStateOf<List<Movie>>(emptyList()) }
+    var initialPlaybackPosition by remember { mutableStateOf(0L) }
     
     var selectedSeries by remember { mutableStateOf<Series?>(null) }
     var selectedItemScreen by rememberSaveable { mutableStateOf(Screen.HOME) } 
@@ -520,11 +605,17 @@ fun App(driver: SqlDriver) {
                 VideoPlayerScreen(
                     movie = selectedMovie!!, 
                     playlist = moviePlaylist,
+                    initialPosition = initialPlaybackPosition,
                     currentScreen = selectedItemScreen, 
                     pathStack = currentPathStrings, 
-                    onBack = { selectedMovie = null; moviePlaylist = emptyList() }, 
+                    onBack = { 
+                        selectedMovie = null
+                        moviePlaylist = emptyList()
+                        initialPlaybackPosition = 0L
+                    }, 
                     onMovieChange = { newMovie -> 
                         selectedMovie = newMovie
+                        initialPlaybackPosition = 0L
                         saveWatchHistory(newMovie, selectedItemScreen, currentPathStrings)
                     },
                     tabName = selectedOnAirTab
@@ -545,8 +636,9 @@ fun App(driver: SqlDriver) {
                     pathStack = currentPathStrings, 
                     onBack = { selectedSeries = null }, 
                     onSaveWatchHistory = saveWatchHistory,
-                    onPlayFullScreen = { movie -> 
+                    onPlayFullScreen = { movie, position -> 
                         saveWatchHistory(movie, selectedItemScreen, currentPathStrings)
+                        initialPlaybackPosition = position
                         selectedMovie = movie 
                         moviePlaylist = selectedSeries!!.episodes
                     }
@@ -607,7 +699,7 @@ fun App(driver: SqlDriver) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.Red) }
                         } else {
                             when (currentScreen) {
-                                Screen.HOME -> HomeScreen(watchHistory, homeLatestSeries, onAirSeries, onWatchItemClick = { history ->
+                                Screen.HOME -> HomeScreen(watchHistory, homeLatestSeries, onAirSeries, homeScrollState, onWatchItemClick = { history ->
                                     val movie = Movie(history.id, history.title, history.thumbnailUrl, history.videoUrl)
                                     val screen = Screen.valueOf(history.screenType)
                                     val allLoadedSeries = homeLatestSeries + onAirSeries + onAirDramaSeries + explorerSeries
@@ -628,11 +720,11 @@ fun App(driver: SqlDriver) {
                                         }
                                     } catch (e: Exception) { println("PathStack Decode Error: ${e.message}") }
                                 }, onSeriesClick = { s, sc -> selectedSeries = s; selectedItemScreen = sc })
-                                Screen.ON_AIR -> CategoryListScreen(selectedFilter = selectedOnAirTab, onFilterSelected = { selectedOnAirTab = it }, seriesList = if (selectedOnAirTab == "라프텔 애니메이션") onAirSeries else onAirDramaSeries) { s, sc -> selectedSeries = s; selectedItemScreen = sc }
-                                Screen.ANIMATIONS -> MovieExplorer(title = "애니메이션", pathStack = aniPathStack, items = aniItems, onFolderClick = { aniPathStack = aniPathStack + it }, onBackClick = { if (aniPathStack.isNotEmpty()) aniPathStack = aniPathStack.dropLast(1) })
-                                Screen.MOVIES -> MovieExplorer(title = "영화", pathStack = moviePathStack, items = movieItems, onFolderClick = { moviePathStack = moviePathStack + it }, onBackClick = { if (moviePathStack.isNotEmpty()) moviePathStack = moviePathStack.dropLast(1) })
-                                Screen.FOREIGN_TV -> MovieExplorer(title = "외국 TV", pathStack = foreignTvPathStack, items = foreignTvItems, onFolderClick = { foreignTvPathStack = foreignTvPathStack + it }, onBackClick = { if (foreignTvPathStack.isNotEmpty()) foreignTvPathStack = foreignTvPathStack.dropLast(1) })
-                                Screen.KOREAN_TV -> MovieExplorer(title = "국내 TV", pathStack = koreanTvPathStack, items = koreanTvItems, onFolderClick = { koreanTvPathStack = koreanTvPathStack + it }, onBackClick = { if (koreanTvPathStack.isNotEmpty()) koreanTvPathStack = koreanTvPathStack.dropLast(1) })
+                                Screen.ON_AIR -> CategoryListScreen(selectedFilter = selectedOnAirTab, onFilterSelected = { selectedOnAirTab = it }, seriesList = if (selectedOnAirTab == "라프텔 애니메이션") onAirSeries else onAirDramaSeries, scrollState = onAirScrollState) { s, sc -> selectedSeries = s; selectedItemScreen = sc }
+                                Screen.ANIMATIONS -> MovieExplorer(title = "애니메이션", pathStack = aniPathStack, items = aniItems, scrollState = animationsScrollState, onFolderClick = { aniPathStack = aniPathStack + it }, onBackClick = { if (aniPathStack.isNotEmpty()) aniPathStack = aniPathStack.dropLast(1) })
+                                Screen.MOVIES -> MovieExplorer(title = "영화", pathStack = moviePathStack, items = movieItems, scrollState = moviesScrollState, onFolderClick = { moviePathStack = moviePathStack + it }, onBackClick = { if (moviePathStack.isNotEmpty()) moviePathStack = moviePathStack.dropLast(1) })
+                                Screen.FOREIGN_TV -> MovieExplorer(title = "외국 TV", pathStack = foreignTvPathStack, items = foreignTvItems, scrollState = foreignTvScrollState, onFolderClick = { foreignTvPathStack = foreignTvPathStack + it }, onBackClick = { if (foreignTvPathStack.isNotEmpty()) foreignTvPathStack = foreignTvPathStack.dropLast(1) })
+                                Screen.KOREAN_TV -> MovieExplorer(title = "국내 TV", pathStack = koreanTvPathStack, items = koreanTvItems, scrollState = koreanTvScrollState, onFolderClick = { koreanTvPathStack = koreanTvPathStack + it }, onBackClick = { if (koreanTvPathStack.isNotEmpty()) koreanTvPathStack = koreanTvPathStack.dropLast(1) })
                                 Screen.SEARCH -> SearchScreen(query = searchQuery, onQueryChange = { searchQuery = it }, selectedCategory = searchCategory, onCategoryChange = { searchCategory = it }, recentQueries = recentQueries, onSaveQuery = { q -> scope.launch { searchHistoryDataSource.insertQuery(q, currentTimeMillis()) } }, onDeleteQuery = { q -> scope.launch { searchHistoryDataSource.deleteQuery(q) } }, onClearAll = { scope.launch { searchHistoryDataSource.clearAll() } }, onSeriesClick = { s, sc -> selectedSeries = s; selectedItemScreen = sc })
                                 else -> {}
                             }
@@ -649,6 +741,7 @@ fun CategoryListScreen(
     selectedFilter: String,
     onFilterSelected: (String) -> Unit,
     seriesList: List<Series>,
+    scrollState: LazyGridState = rememberLazyGridState(),
     onSeriesClick: (Series, Screen) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -685,6 +778,7 @@ fun CategoryListScreen(
         BoxWithConstraints {
             val columns = if (maxWidth > 600.dp) GridCells.Fixed(4) else GridCells.Fixed(3)
             LazyVerticalGrid(
+                state = scrollState,
                 columns = columns,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 100.dp),
@@ -811,12 +905,23 @@ fun WatchHistoryRow(watchHistory: List<WatchHistory>, onWatchItemClick: (WatchHi
 }
 
 @Composable
-fun HomeScreen(watchHistory: List<WatchHistory>, latestSeries: List<Series>, aniSeries: List<Series>, onWatchItemClick: (WatchHistory) -> Unit, onSeriesClick: (Series, Screen) -> Unit) {
+fun HomeScreen(
+    watchHistory: List<WatchHistory>, 
+    latestSeries: List<Series>, 
+    aniSeries: List<Series>, 
+    scrollState: LazyListState = rememberLazyListState(),
+    onWatchItemClick: (WatchHistory) -> Unit, 
+    onSeriesClick: (Series, Screen) -> Unit
+) {
     val heroMovie = remember(latestSeries, aniSeries) { latestSeries.firstOrNull()?.episodes?.firstOrNull() ?: aniSeries.firstOrNull()?.episodes?.firstOrNull() }
     
     val isMainContentLoaded = heroMovie != null || latestSeries.isNotEmpty() || aniSeries.isNotEmpty()
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) { 
+    LazyColumn(
+        state = scrollState,
+        modifier = Modifier.fillMaxSize(), 
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) { 
         if (heroMovie != null) {
             item { HeroSection(heroMovie) { m -> val target = latestSeries.find { it.episodes.any { ep -> ep.id == m.id } }; if (target != null) onSeriesClick(target, Screen.LATEST) else aniSeries.find { it.episodes.any { ep -> ep.id == m.id } }?.let { onSeriesClick(it, Screen.ON_AIR) } } }
         }
@@ -852,10 +957,21 @@ fun SearchGridItem(series: Series, onSeriesClick: (Series) -> Unit) {
 }
 
 @Composable
-fun MovieExplorer(title: String, pathStack: List<String>, items: List<Category>, onFolderClick: (String) -> Unit, onBackClick: () -> Unit) {
+fun MovieExplorer(
+    title: String, 
+    pathStack: List<String>, 
+    items: List<Category>, 
+    scrollState: LazyListState = rememberLazyListState(),
+    onFolderClick: (String) -> Unit, 
+    onBackClick: () -> Unit
+) {
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = if (pathStack.isEmpty()) title else pathStack.last(), onBack = if (pathStack.isNotEmpty()) onBackClick else null)
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
+        LazyColumn(
+            state = scrollState,
+            modifier = Modifier.fillMaxSize(), 
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
             items(items) { item ->
                 ListItem(headlineContent = { Text(text = item.name, color = Color.White) }, leadingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Color.White) }, trailingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.DarkGray) }, modifier = Modifier.clickable { onFolderClick(item.name) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
             }
@@ -872,11 +988,21 @@ fun NasAppBar(title: String, onBack: (() -> Unit)? = null) {
 }
 
 @Composable
-fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit, onSaveWatchHistory: (Movie, Screen, List<String>) -> Unit, onPlayFullScreen: (Movie) -> Unit) {
+fun SeriesDetailScreen(
+    series: Series, 
+    categoryTitle: String = "", 
+    currentScreen: Screen, 
+    pathStack: List<String>, 
+    onBack: () -> Unit, 
+    onSaveWatchHistory: (Movie, Screen, List<String>) -> Unit, 
+    onPlayFullScreen: (Movie, Long) -> Unit
+) {
     val scope = rememberCoroutineScope()
     var playingMovie by remember(series) { mutableStateOf(series.episodes.firstOrNull()) }
     var metadata by remember(series) { mutableStateOf<TmdbMetadata?>(null) }
-    var currentEpisodeOverview by remember { mutableStateOf<String?>(null) }
+    var credits by remember(series) { mutableStateOf<List<TmdbCast>>(emptyList()) }
+    var seasonEpisodes by remember(series) { mutableStateOf<List<TmdbEpisode>>(emptyList()) }
+    var currentPosition by remember { mutableStateOf(0L) }
     
     LaunchedEffect(playingMovie) {
         playingMovie?.let { movie ->
@@ -884,24 +1010,30 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
         }
     }
 
-    LaunchedEffect(series) { metadata = fetchTmdbMetadata(series.title) }
-    LaunchedEffect(playingMovie, metadata) {
-        val tmdbId = metadata?.tmdbId
-        if (tmdbId != null && metadata?.mediaType == "tv" && playingMovie != null) {
-            val epNum = Regex("\\d+").find(playingMovie!!.title.extractEpisode() ?: "")?.value?.toIntOrNull()
-            currentEpisodeOverview = if (epNum != null) fetchTmdbEpisodeOverview(tmdbId, playingMovie!!.title.extractSeason(), epNum) else null
-        } else { currentEpisodeOverview = null }
+    LaunchedEffect(series) { 
+        val meta = fetchTmdbMetadata(series.title)
+        metadata = meta
+        if (meta.tmdbId != null) {
+            credits = fetchTmdbCredits(meta.tmdbId, meta.mediaType)
+            // 시즌 1 정보를 기본으로 가져옴 (필요시 파싱된 시즌 번호 사용 가능)
+            val seasonNum = series.episodes.firstOrNull()?.title?.extractSeason() ?: 1
+            seasonEpisodes = fetchTmdbSeasonDetails(meta.tmdbId, seasonNum)
+        }
     }
+
     DisposableEffect(Unit) { onDispose { scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} } } }
+    
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = categoryTitle, onBack = onBack)
         Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) { 
             playingMovie?.let { movie -> 
                 VideoPlayer(
                     url = createVideoServeUrl(currentScreen, pathStack, movie, tabName = categoryTitle), 
-                    modifier = Modifier.fillMaxSize(), 
+                    modifier = Modifier.fillMaxSize(),
+                    initialPosition = 0L,
+                    onPositionUpdate = { currentPosition = it },
                     onFullscreenClick = { 
-                        onPlayFullScreen(movie) 
+                        onPlayFullScreen(movie, currentPosition) 
                     },
                     onVideoEnded = {
                         val currentIndex = series.episodes.indexOfFirst { it.id == movie.id }
@@ -912,16 +1044,130 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
                 ) 
             } 
         }
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(text = series.title, color = Color.White, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, fontSize = 24.sp))
-            val displayOverview = currentEpisodeOverview ?: metadata?.overview
-            if (!displayOverview.isNullOrBlank()) { Spacer(Modifier.height(8.dp)); Text(text = displayOverview, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp), maxLines = 4, overflow = TextOverflow.Ellipsis) }
-        }
-        HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
+        
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
-            items(series.episodes) { ep -> ListItem(headlineContent = { Text(text = ep.title.extractEpisode() ?: ep.title.prettyTitle(), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }, leadingContent = { Box(modifier = Modifier.width(120.dp).height(68.dp).background(Color(0xFF1A1A1A))) { TmdbAsyncImage(title = ep.title, modifier = Modifier.fillMaxSize()); Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.align(Alignment.Center).size(28.dp)) } }, modifier = Modifier.clickable { 
-                playingMovie = ep 
-            }, colors = ListItemDefaults.colors(containerColor = Color.Transparent)) }
+            item {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(text = series.title, color = Color.White, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, fontSize = 24.sp))
+                    
+                    if (!metadata?.overview.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = metadata!!.overview!!, 
+                            color = Color.LightGray, 
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                            maxLines = 5,
+                            overflow = TextOverflow.Ellipsis
+                        ) 
+                    }
+                }
+            }
+            
+            if (credits.isNotEmpty()) {
+                item {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            text = "성우 및 출연진", 
+                            color = Color.White, 
+                            fontWeight = FontWeight.Bold, 
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(credits) { cast ->
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(85.dp)) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalPlatformContext.current)
+                                            .data("$TMDB_IMAGE_BASE${cast.profilePath}")
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(75.dp).clip(CircleShape).background(Color.DarkGray),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(text = cast.name, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                                    val characterName = cast.roles?.firstOrNull()?.character ?: cast.character ?: ""
+                                    if (characterName.isNotEmpty()) {
+                                        Text(text = characterName, color = Color.Gray, fontSize = 9.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { 
+                Text(
+                    text = "에피소드", 
+                    color = Color.White, 
+                    fontWeight = FontWeight.Bold, 
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
+                )
+            }
+            
+            items(series.episodes) { ep -> 
+                val isPlaying = playingMovie?.id == ep.id
+                val epNum = ep.title.extractEpisode()?.filter { it.isDigit() }?.toIntOrNull()
+                val epMetadata = seasonEpisodes.find { it.episodeNumber == epNum }
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { playingMovie = ep }
+                        .background(if (isPlaying) Color.White.copy(alpha = 0.1f) else Color.Transparent)
+                        .padding(vertical = 12.dp)
+                ) {
+                    ListItem(
+                        headlineContent = { 
+                            Text(
+                                text = ep.title.extractEpisode() ?: ep.title.prettyTitle(), 
+                                color = if (isPlaying) Color.Red else Color.White, 
+                                fontWeight = FontWeight.Bold, 
+                                fontSize = 16.sp
+                            ) 
+                        }, 
+                        supportingContent = {
+                            if (!epMetadata?.name.isNullOrBlank()) {
+                                Text(text = epMetadata!!.name!!, color = Color.LightGray, fontSize = 13.sp)
+                            }
+                        },
+                        leadingContent = { 
+                            Box(modifier = Modifier.width(130.dp).height(74.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF1A1A1A))) { 
+                                val stillUrl = epMetadata?.stillPath?.let { "$TMDB_IMAGE_BASE$it" }
+                                if (stillUrl != null) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalPlatformContext.current).data(stillUrl).crossfade(true).build(),
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    TmdbAsyncImage(title = ep.title, modifier = Modifier.fillMaxSize())
+                                }
+                                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)))
+                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(32.dp)) 
+                            } 
+                        }, 
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    )
+                    
+                    if (!epMetadata?.overview.isNullOrBlank()) {
+                        Text(
+                            text = epMetadata!!.overview!!,
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -930,6 +1176,7 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
 fun VideoPlayerScreen(
     movie: Movie, 
     playlist: List<Movie>,
+    initialPosition: Long = 0L,
     currentScreen: Screen, 
     pathStack: List<String>, 
     onBack: () -> Unit, 
@@ -937,12 +1184,23 @@ fun VideoPlayerScreen(
     tabName: String = ""
 ) {
     val scope = rememberCoroutineScope()
+    // 시작 시 버튼이 보이도록 초기값을 true로 설정합니다.
+    var showControls by remember(movie) { mutableStateOf(true) }
+    
     DisposableEffect(Unit) { onDispose { scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} } } }
     
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
         VideoPlayer(
             url = createVideoServeUrl(currentScreen, pathStack, movie, tabName = tabName), 
             modifier = Modifier.fillMaxSize(),
+            initialPosition = initialPosition,
+            onControllerVisibilityChanged = { visible ->
+                showControls = visible
+            },
             onVideoEnded = {
                 val currentIndex = playlist.indexOfFirst { it.id == movie.id }
                 if (currentIndex != -1 && currentIndex < playlist.size - 1) {
@@ -951,35 +1209,52 @@ fun VideoPlayerScreen(
             }
         )
         
-        Row(
-            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // 상단 컨트롤 (닫기 버튼 등)
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = movie.title.prettyTitle(), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = movie.title.prettyTitle(), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = onBack) { Icon(imageVector = Icons.Default.Close, contentDescription = null, tint = Color.White) }
             }
-            IconButton(onClick = onBack) { Icon(imageVector = Icons.Default.Close, contentDescription = null, tint = Color.White) }
         }
         
+        // 하단 컨트롤 (다음 에피소드 버튼)
         val currentIndex = playlist.indexOfFirst { it.id == movie.id }
         if (currentIndex != -1 && currentIndex < playlist.size - 1) {
-            Surface(
-                onClick = { onMovieChange(playlist[currentIndex + 1]) },
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn(),
+                exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 100.dp, end = 32.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = Color.Black.copy(alpha = 0.6f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                    .padding(bottom = 100.dp, end = 32.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    onClick = { onMovieChange(playlist[currentIndex + 1]) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.Black.copy(alpha = 0.6f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text("다음 에피소드", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("다음 에피소드", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    }
                 }
             }
         }

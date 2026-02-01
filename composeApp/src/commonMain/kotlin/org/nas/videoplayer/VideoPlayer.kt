@@ -7,6 +7,9 @@ import androidx.compose.ui.Modifier
 expect fun VideoPlayer(
     url: String, 
     modifier: Modifier = Modifier,
+    initialPosition: Long = 0L,
+    onPositionUpdate: ((Long) -> Unit)? = null,
+    onControllerVisibilityChanged: ((Boolean) -> Unit)? = null,
     onFullscreenClick: (() -> Unit)? = null,
     onVideoEnded: (() -> Unit)? = null
 )

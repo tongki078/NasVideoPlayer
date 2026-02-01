@@ -7,50 +7,44 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import android.util.Log
+import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
 @Composable
 actual fun VideoPlayer(
     url: String,
     modifier: Modifier,
+    initialPosition: Long,
+    onPositionUpdate: ((Long) -> Unit)?,
+    onControllerVisibilityChanged: ((Boolean) -> Unit)?,
     onFullscreenClick: (() -> Unit)?,
     onVideoEnded: (() -> Unit)?
 ) {
     val context = LocalContext.current
     val currentOnVideoEnded by rememberUpdatedState(onVideoEnded)
+    val currentOnPositionUpdate by rememberUpdatedState(onPositionUpdate)
+    val currentOnVisibilityChanged by rememberUpdatedState(onControllerVisibilityChanged)
 
     val exoPlayer = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
             .setAllowCrossProtocolRedirects(true)
-
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(httpDataSourceFactory)
+            .setUserAgent("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
 
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(mediaSourceFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory))
             .build().apply {
                 playWhenReady = true
-                
-                trackSelectionParameters = trackSelectionParameters
-                    .buildUpon()
-                    .setPreferredAudioLanguage("ko")
-                    .setPreferredTextLanguage("ko")
-                    .build()
-
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.e("VideoPlayer", "재생 에러 발생: ${error.errorCodeName} - ${error.message}")
+                        Log.e("VideoPlayer", "재생 에러: ${error.errorCodeName} - ${error.message}")
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -62,15 +56,20 @@ actual fun VideoPlayer(
             }
     }
 
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            if (exoPlayer.isPlaying) {
+                currentOnPositionUpdate?.invoke(exoPlayer.currentPosition)
+            }
+            delay(1000)
+        }
+    }
+
     LaunchedEffect(url) {
         if (url.isBlank()) return@LaunchedEffect
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMimeType(MimeTypes.APPLICATION_M3U8)
-            .build()
-
+        val mediaItem = MediaItem.Builder().setUri(url).build()
         exoPlayer.setMediaItem(mediaItem)
+        if (initialPosition > 0) exoPlayer.seekTo(initialPosition)
         exoPlayer.prepare()
         exoPlayer.play()
     }
@@ -88,9 +87,16 @@ actual fun VideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
-                    setFullscreenButtonClickListener {
-                        onFullscreenClick?.invoke()
-                    }
+                    // 컨트롤러 가시성 변화 감지
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        currentOnVisibilityChanged?.invoke(visibility == android.view.View.VISIBLE)
+                    })
+                    
+                    // 시작 시 컨트롤러를 명시적으로 보여주어 Compose 상태(true)와 맞춥니다.
+                    showController()
+                    
+                    // 초기 상태 보고
+                    currentOnVisibilityChanged?.invoke(true)
                 }
             },
             update = { playerView ->
