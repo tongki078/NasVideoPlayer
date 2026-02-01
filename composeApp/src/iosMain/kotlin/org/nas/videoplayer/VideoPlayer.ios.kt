@@ -17,8 +17,11 @@ import kotlinx.coroutines.isActive
 actual fun VideoPlayer(
     url: String,
     modifier: Modifier,
-    onFullscreenClick: (() -> Unit)?
+    onFullscreenClick: (() -> Unit)?,
+    onVideoEnded: (() -> Unit)?
 ) {
+    val currentOnVideoEnded by rememberUpdatedState(onVideoEnded)
+    
     val player = remember { 
         AVPlayer().apply {
             this.automaticallyWaitsToMinimizeStalling = true
@@ -34,7 +37,16 @@ actual fun VideoPlayer(
     }
 
     DisposableEffect(Unit) {
+        val observer = NSNotificationCenter.defaultCenter.addObserverForName(
+            name = AVPlayerItemDidPlayToEndTimeNotification,
+            `object` = null,
+            queue = null
+        ) { _ ->
+            currentOnVideoEnded?.invoke()
+        }
+        
         onDispose {
+            NSNotificationCenter.defaultCenter.removeObserver(observer)
             player.pause()
             player.replaceCurrentItemWithPlayerItem(null)
         }
@@ -63,7 +75,6 @@ actual fun VideoPlayer(
             "User-Agent" to "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         )
         
-        // Use string literal for AVURLAssetHTTPHeaderFieldsKey as it can be unresolved in some environments
         val assetOptions = mapOf<Any?, Any?>(
             "AVURLAssetHTTPHeaderFieldsKey" to headers
         )

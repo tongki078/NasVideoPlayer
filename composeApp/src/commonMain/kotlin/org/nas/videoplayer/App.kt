@@ -49,21 +49,7 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.launchIn
-import androidx.compose.runtime.State
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.*
 import androidx.compose.runtime.Composable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -72,8 +58,6 @@ import kotlinx.serialization.encodeToString
 import org.nas.videoplayer.data.*
 import org.nas.videoplayer.db.AppDatabase
 import com.squareup.sqldelight.db.SqlDriver
-import org.nas.videoplayer.data.SearchHistoryDataSource
-import org.nas.videoplayer.data.WatchHistoryDataSource
 
 const val BASE_URL = "http://192.168.0.2:5000"
 const val IPHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
@@ -337,11 +321,13 @@ fun App(driver: SqlDriver) {
     val searchHistoryDataSource = remember { SearchHistoryDataSource(db) }
     val watchHistoryDataSource = remember { WatchHistoryDataSource(db) }
 
-    val recentQueriesState = collectAsStateFlow(searchHistoryDataSource.getRecentQueries().map { it.map { row -> row.toData() } }, emptyList<SearchHistory>())
-    val recentQueries by recentQueriesState
+    val recentQueries by searchHistoryDataSource.getRecentQueries()
+        .map { list -> list.map { it.toData() } }
+        .collectAsState(initial = emptyList())
     
-    val watchHistoryState = collectAsStateFlow(watchHistoryDataSource.getWatchHistory().map { it.map { row -> row.toData() } }, emptyList<WatchHistory>())
-    val watchHistory by watchHistoryState
+    val watchHistory by watchHistoryDataSource.getWatchHistory()
+        .map { list -> list.map { it.toData() } }
+        .collectAsState(initial = emptyList())
 
     val scope = rememberCoroutineScope()
 
@@ -523,10 +509,18 @@ fun App(driver: SqlDriver) {
                     Screen.KOREAN_TV -> "국내 TV"
                     else -> ""
                 }
-                SeriesDetailScreen(series = selectedSeries!!, categoryTitle = catTitle, currentScreen = selectedItemScreen, pathStack = currentPathStrings, onBack = { selectedSeries = null }, onPlayFullScreen = { movie -> 
-                    saveWatchHistory(movie, selectedItemScreen, currentPathStrings)
-                    selectedMovie = movie 
-                })
+                SeriesDetailScreen(
+                    series = selectedSeries!!, 
+                    categoryTitle = catTitle, 
+                    currentScreen = selectedItemScreen, 
+                    pathStack = currentPathStrings, 
+                    onBack = { selectedSeries = null }, 
+                    onSaveWatchHistory = saveWatchHistory,
+                    onPlayFullScreen = { movie -> 
+                        saveWatchHistory(movie, selectedItemScreen, currentPathStrings)
+                        selectedMovie = movie 
+                    }
+                )
             } else if (isExplorerSeriesMode) {
                 val catTitle = when (currentScreen) {
                     Screen.ANIMATIONS -> "애니메이션"
@@ -649,7 +643,6 @@ fun WatchHistoryRow(watchHistory: List<WatchHistory>, onWatchItemClick: (WatchHi
 fun HomeScreen(watchHistory: List<WatchHistory>, latestSeries: List<Series>, aniSeries: List<Series>, onWatchItemClick: (WatchHistory) -> Unit, onSeriesClick: (Series, Screen) -> Unit) {
     val heroMovie = remember(latestSeries, aniSeries) { latestSeries.firstOrNull()?.episodes?.firstOrNull() ?: aniSeries.firstOrNull()?.episodes?.firstOrNull() }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) { 
-        item { WatchHistoryRow(watchHistory, onWatchItemClick) }
         if (heroMovie != null) {
             item { HeroSection(heroMovie) { m -> val target = latestSeries.find { it.episodes.any { ep -> ep.id == m.id } }; if (target != null) onSeriesClick(target, Screen.LATEST) else aniSeries.find { it.episodes.any { ep -> ep.id == m.id } }?.let { onSeriesClick(it, Screen.ON_AIR) } } }
         }
@@ -659,6 +652,7 @@ fun HomeScreen(watchHistory: List<WatchHistory>, latestSeries: List<Series>, ani
         if (aniSeries.isNotEmpty()) {
             item { MovieRow("라프텔 애니메이션", Screen.ON_AIR, aniSeries, onSeriesClick) }
         }
+        item { WatchHistoryRow(watchHistory, onWatchItemClick) }
     }
 }
 
@@ -701,11 +695,19 @@ fun NasAppBar(title: String, onBack: (() -> Unit)? = null) {
 }
 
 @Composable
-fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit, onPlayFullScreen: (Movie) -> Unit) {
+fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit, onSaveWatchHistory: (Movie, Screen, List<String>) -> Unit, onPlayFullScreen: (Movie) -> Unit) {
     val scope = rememberCoroutineScope()
     var playingMovie by remember(series) { mutableStateOf(series.episodes.firstOrNull()) }
     var metadata by remember(series) { mutableStateOf<TmdbMetadata?>(null) }
     var currentEpisodeOverview by remember { mutableStateOf<String?>(null) }
+    
+    // 영상을 재생하기 시작할 때 자동으로 히스토리에 저장
+    LaunchedEffect(playingMovie) {
+        playingMovie?.let { movie ->
+            onSaveWatchHistory(movie, currentScreen, pathStack)
+        }
+    }
+
     LaunchedEffect(series) { metadata = fetchTmdbMetadata(series.title) }
     LaunchedEffect(playingMovie, metadata) {
         val tmdbId = metadata?.tmdbId
@@ -717,7 +719,24 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
     DisposableEffect(Unit) { onDispose { scope.launch { try { client.get("$BASE_URL/stop_all") } catch (e: Exception) {} } } }
     Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         NasAppBar(title = categoryTitle, onBack = onBack)
-        Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) { playingMovie?.let { movie -> VideoPlayer(url = createVideoServeUrl(currentScreen, pathStack, movie, tabName = categoryTitle), modifier = Modifier.fillMaxSize(), onFullscreenClick = { onPlayFullScreen(movie) }) } }
+        Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) { 
+            playingMovie?.let { movie -> 
+                VideoPlayer(
+                    url = createVideoServeUrl(currentScreen, pathStack, movie, tabName = categoryTitle), 
+                    modifier = Modifier.fillMaxSize(), 
+                    onFullscreenClick = { 
+                        onPlayFullScreen(movie) 
+                    },
+                    onVideoEnded = {
+                        // 현재 에피소드가 끝나면 다음 에피소드 자동 재생
+                        val currentIndex = series.episodes.indexOfFirst { it.id == movie.id }
+                        if (currentIndex != -1 && currentIndex < series.episodes.size - 1) {
+                            playingMovie = series.episodes[currentIndex + 1]
+                        }
+                    }
+                )
+            } 
+        }
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text(text = series.title, color = Color.White, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold, fontSize = 24.sp))
             val displayOverview = currentEpisodeOverview ?: metadata?.overview
@@ -726,7 +745,6 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
         HorizontalDivider(color = Color.DarkGray, thickness = 1.dp)
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
             items(series.episodes) { ep -> ListItem(headlineContent = { Text(text = ep.title.extractEpisode() ?: ep.title.prettyTitle(), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }, leadingContent = { Box(modifier = Modifier.width(120.dp).height(68.dp).background(Color(0xFF1A1A1A))) { TmdbAsyncImage(title = ep.title, modifier = Modifier.fillMaxSize()); Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.align(Alignment.Center).size(28.dp)) } }, modifier = Modifier.clickable { 
-                onPlayFullScreen(ep)
                 playingMovie = ep 
             }, colors = ListItemDefaults.colors(containerColor = Color.Transparent)) }
         }
@@ -897,13 +915,3 @@ fun Char.isHangul(): Boolean =
     this in '\u3130'..'\u318F' ||
     this in '\uA960'..'\uA97F' ||
     this in '\uD7B0'..'\uD7FF'
-
-// collectAsStateFlow 명확히 선언
-@Composable
-fun <T> collectAsStateFlow(flow: Flow<T>, initial: T): State<T> {
-    val state = remember { mutableStateOf(initial) }
-    LaunchedEffect(flow) {
-        flow.collect { state.value = it }
-    }
-    return state
-}

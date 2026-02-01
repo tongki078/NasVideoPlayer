@@ -23,12 +23,13 @@ import android.util.Log
 actual fun VideoPlayer(
     url: String,
     modifier: Modifier,
-    onFullscreenClick: (() -> Unit)?
+    onFullscreenClick: (() -> Unit)?,
+    onVideoEnded: (() -> Unit)?
 ) {
     val context = LocalContext.current
+    val currentOnVideoEnded by rememberUpdatedState(onVideoEnded)
 
     val exoPlayer = remember {
-        // 서버에 iPhone인 척 요청하기 위한 DataSource 설정
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
             .setAllowCrossProtocolRedirects(true)
@@ -41,7 +42,6 @@ actual fun VideoPlayer(
             .build().apply {
                 playWhenReady = true
                 
-                // 한국어 자막 및 오디오 우선 선택 설정
                 trackSelectionParameters = trackSelectionParameters
                     .buildUpon()
                     .setPreferredAudioLanguage("ko")
@@ -52,6 +52,12 @@ actual fun VideoPlayer(
                     override fun onPlayerError(error: PlaybackException) {
                         Log.e("VideoPlayer", "재생 에러 발생: ${error.errorCodeName} - ${error.message}")
                     }
+
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) {
+                            currentOnVideoEnded?.invoke()
+                        }
+                    }
                 })
             }
     }
@@ -59,7 +65,6 @@ actual fun VideoPlayer(
     LaunchedEffect(url) {
         if (url.isBlank()) return@LaunchedEffect
 
-        // HLS 스트리밍임을 명시하여 서버의 리다이렉트를 처리함
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setMimeType(MimeTypes.APPLICATION_M3U8)

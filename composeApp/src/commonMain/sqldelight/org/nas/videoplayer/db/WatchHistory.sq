@@ -12,7 +12,8 @@ selectAll:
 SELECT * FROM watch_history ORDER BY timestamp DESC;
 
 insertHistory:
-INSERT INTO watch_history(id, title, videoUrl, thumbnailUrl, timestamp, screenType, pathStackJson) VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO watch_history(id, title, videoUrl, thumbnailUrl, timestamp, screenType, pathStackJson)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 deleteHistory:
 DELETE FROM watch_history WHERE id = ?;
