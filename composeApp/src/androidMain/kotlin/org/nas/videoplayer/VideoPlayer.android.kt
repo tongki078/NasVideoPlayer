@@ -15,6 +15,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import android.util.Log
+import android.view.View
+import androidx.compose.foundation.layout.fillMaxSize
 import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
@@ -87,16 +89,11 @@ actual fun VideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
-                    // 컨트롤러 가시성 변화 감지
+                    // 최신 Media3 가시성 리스너 설정
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-                        currentOnVisibilityChanged?.invoke(visibility == android.view.View.VISIBLE)
+                        currentOnVisibilityChanged?.invoke(visibility == View.VISIBLE)
                     })
-                    
-                    // 시작 시 컨트롤러를 명시적으로 보여주어 Compose 상태(true)와 맞춥니다.
                     showController()
-                    
-                    // 초기 상태 보고
-                    currentOnVisibilityChanged?.invoke(true)
                 }
             },
             update = { playerView ->
@@ -104,7 +101,7 @@ actual fun VideoPlayer(
                     onFullscreenClick?.invoke()
                 }
             },
-            modifier = Modifier.matchParentSize()
+            modifier = Modifier.fillMaxSize()
         )
     }
 }
