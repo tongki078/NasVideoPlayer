@@ -6,14 +6,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
+import org.nas.videoplayer.data.DatabaseDriverFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-
+        val driver = DatabaseDriverFactory(applicationContext).createDriver()
         setContent {
-            App()
+            App(driver)
         }
     }
 }
@@ -21,5 +22,6 @@ class MainActivity : ComponentActivity() {
 @Preview
 @Composable
 fun AppAndroidPreview() {
-    App()
+    val driver = DatabaseDriverFactory(androidx.compose.ui.platform.LocalContext.current).createDriver()
+    App(driver)
 }

@@ -16,6 +16,9 @@ ktor = "3.0.3"
 kotlinx-serialization = "1.7.3"
 media3 = "1.5.1"
 coil = "3.0.4"
+androidx-room = "2.7.0-alpha11"
+sqlite = "2.5.0-alpha11"
+ksp = "2.0.21-1.0.25"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -52,6 +55,17 @@ androidx-media3-hls = { module = "androidx.media3:media3-exoplayer-hls", version
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-ktor = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
 
+# Room
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "androidx-room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "androidx-room" }
+sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sqlite" }
+
+# SQLDelight
+sqldelight-runtime = { module = "com.squareup.sqldelight:runtime", version = "1.5.5" }
+sqldelight-coroutines = { module = "com.squareup.sqldelight:coroutines-extensions", version = "1.5.5" }
+sqldelight-android = { module = "com.squareup.sqldelight:android-driver", version = "1.5.5" }
+sqldelight-native = { module = "com.squareup.sqldelight:native-driver", version = "1.5.5" }
+
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
@@ -59,3 +73,5 @@ composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMul
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+androidx-room = { id = "androidx.room", version.ref = "androidx-room" }

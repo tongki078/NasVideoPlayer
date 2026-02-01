@@ -4,8 +4,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 배경색 (업로드하신 이미지의 파란색: #2196F3) -->
+    <!-- 중복 방지를 위해 이름을 변경한 재생 버튼 아이콘 -->
     <path
-        android:fillColor="#2196F3"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,34 L72,54 L40,74 Z" />
 </vector>

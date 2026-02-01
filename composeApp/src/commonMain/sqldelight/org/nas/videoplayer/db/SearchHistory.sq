@@ -1,0 +1,20 @@
+CREATE TABLE search_history (
+    query TEXT NOT NULL PRIMARY KEY,
+    timestamp INTEGER NOT NULL
+);
+
+insertHistory:
+INSERT OR REPLACE INTO search_history(query, timestamp)
+VALUES (?, ?);
+
+selectAll:
+SELECT * FROM search_history
+ORDER BY timestamp DESC
+LIMIT 10;
+
+deleteQuery:
+DELETE FROM search_history
+WHERE query = ?;
+
+deleteAll:
+DELETE FROM search_history;

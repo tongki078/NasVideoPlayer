@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+    id("com.squareup.sqldelight") version "1.5.5"
 }
 
 kotlin {
@@ -16,7 +17,6 @@ kotlin {
         }
     }
     
-    // iOS 타겟 설정을 더 명시적으로 변경
     listOf(
         iosX64(),
         iosArm64(),
@@ -25,13 +25,19 @@ kotlin {
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
-            // 의존성 노출 설정
             export(libs.androidx.lifecycle.viewmodelCompose)
             export(libs.androidx.lifecycle.runtimeCompose)
+            // Link system sqlite3 and zlib
+            linkerOpts("-lsqlite3", "-lz")
         }
     }
     
     sourceSets {
+        all {
+            languageSettings.optIn("kotlinx.cinterop.ExperimentalForeignApi")
+            languageSettings.optIn("kotlinx.cinterop.BetaInteropApi")
+        }
+
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
@@ -39,6 +45,7 @@ kotlin {
             implementation(libs.androidx.media3.exoplayer)
             implementation(libs.androidx.media3.ui)
             implementation(libs.androidx.media3.hls)
+            implementation(libs.sqldelight.android)
         }
         
         commonMain.dependencies {
@@ -48,7 +55,6 @@ kotlin {
             implementation(libs.compose.ui)
             implementation(libs.compose.components.resources)
             
-            // api로 선언해야 iosTarget에서 export 가능
             api(libs.androidx.lifecycle.viewmodelCompose)
             api(libs.androidx.lifecycle.runtimeCompose)
 
@@ -58,11 +64,22 @@ kotlin {
 
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)
+
+            implementation(libs.sqldelight.runtime)
+            implementation(libs.sqldelight.coroutines)
         }
 
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
+            implementation(libs.sqldelight.native)
         }
+    }
+}
+
+sqldelight {
+    database("AppDatabase") {
+        packageName = "org.nas.videoplayer.db"
+        sourceFolders = listOf("sqldelight")
     }
 }
 
@@ -91,8 +108,4 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-}
-
-dependencies {
-    debugImplementation(libs.compose.uiTooling)
 }

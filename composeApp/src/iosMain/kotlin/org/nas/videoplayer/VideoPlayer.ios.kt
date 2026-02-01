@@ -3,7 +3,6 @@ package org.nas.videoplayer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.interop.UIKitViewController
-import androidx.compose.ui.interop.LocalUIViewController
 import platform.AVFoundation.*
 import platform.AVKit.*
 import platform.Foundation.*
@@ -20,7 +19,6 @@ actual fun VideoPlayer(
     modifier: Modifier,
     onFullscreenClick: (() -> Unit)?
 ) {
-    val viewController = LocalUIViewController.current
     val player = remember { 
         AVPlayer().apply {
             this.automaticallyWaitsToMinimizeStalling = true
@@ -45,17 +43,14 @@ actual fun VideoPlayer(
     LaunchedEffect(url) {
         if (url.isBlank()) return@LaunchedEffect
 
-        println("🚀 [iOS_DEBUG] START LOADING: $url")
-
         val nsUrl = try {
             if (url.contains("%")) {
                 NSURL.URLWithString(url)
             } else {
-                val nsString = url as Any as NSString
                 val allowedSet = NSMutableCharacterSet.characterSetWithCharactersInString(":/?#[]@!$&'()*+,;=")
                 allowedSet.formUnionWithCharacterSet(NSCharacterSet.URLQueryAllowedCharacterSet)
                 allowedSet.formUnionWithCharacterSet(NSCharacterSet.URLPathAllowedCharacterSet)
-                val encodedUrl = nsString.stringByAddingPercentEncodingWithAllowedCharacters(allowedSet)
+                val encodedUrl = (url as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedSet)
                 NSURL.URLWithString(encodedUrl ?: url)
             }
         } catch (e: Exception) {
@@ -68,16 +63,16 @@ actual fun VideoPlayer(
             "User-Agent" to "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         )
         
-        val assetOptions = mapOf(
+        // Use string literal for AVURLAssetHTTPHeaderFieldsKey as it can be unresolved in some environments
+        val assetOptions = mapOf<Any?, Any?>(
             "AVURLAssetHTTPHeaderFieldsKey" to headers
         )
 
-        val asset = AVURLAsset.URLAssetWithURL(nsUrl, options = assetOptions as Map<Any?, *>)
+        val asset = AVURLAsset.URLAssetWithURL(nsUrl, options = assetOptions)
         val item = AVPlayerItem.playerItemWithAsset(asset)
         
         item.preferredForwardBufferDuration = 5.0
         
-        // 시스템 자동 자막 선택 및 동기화 기준 설정
         player.appliesMediaSelectionCriteriaAutomatically = true
         val criteria = AVPlayerMediaSelectionCriteria(
             preferredLanguages = listOf("ko", "kor", "ko-KR"),
@@ -90,10 +85,9 @@ actual fun VideoPlayer(
         var checkCount = 0
         while (isActive && checkCount < 100) {
             if (item.status == AVPlayerItemStatusReadyToPlay) {
-                println("✅ [iOS_DEBUG] Status: ReadyToPlay")
-                
                 val group = asset.mediaSelectionGroupForMediaCharacteristic(AVMediaCharacteristicLegible)
                 if (group != null) {
+                    @Suppress("UNCHECKED_CAST")
                     val options = group.options as List<AVMediaSelectionOption>
                     if (options.isNotEmpty()) {
                         val target = options.find { 
@@ -103,7 +97,6 @@ actual fun VideoPlayer(
                         } ?: options.first()
                         
                         item.selectMediaOption(target, inMediaSelectionGroup = group)
-                        println("🎬 [iOS_DEBUG] Subtitle Selected: ${target.displayName}")
                     }
                 }
 
@@ -118,12 +111,10 @@ actual fun VideoPlayer(
 
     UIKitViewController(
         factory = {
-            if (playerViewController.parentViewController == null) {
-                viewController.addChildViewController(playerViewController)
-                playerViewController.didMoveToParentViewController(viewController)
-            }
             playerViewController
         },
-        modifier = modifier
+        modifier = modifier,
+        update = {
+        }
     )
 }

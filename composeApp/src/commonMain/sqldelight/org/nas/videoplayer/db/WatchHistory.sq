@@ -1,0 +1,18 @@
+CREATE TABLE watch_history (
+    id TEXT NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    videoUrl TEXT NOT NULL,
+    thumbnailUrl TEXT,
+    timestamp INTEGER NOT NULL,
+    screenType TEXT NOT NULL,
+    pathStackJson TEXT NOT NULL
+);
+
+selectAll:
+SELECT * FROM watch_history ORDER BY timestamp DESC;
+
+insertHistory:
+INSERT INTO watch_history(id, title, videoUrl, thumbnailUrl, timestamp, screenType, pathStackJson) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteHistory:
+DELETE FROM watch_history WHERE id = ?;
