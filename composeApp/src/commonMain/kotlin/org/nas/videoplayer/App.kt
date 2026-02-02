@@ -156,55 +156,12 @@ val client = HttpClient {
 
 private val tmdbCache = mutableMapOf<String, TmdbMetadata>()
 
-// --- 테마 이름 생성기 ---
-fun getRandomThemeName(originalName: String, index: Int, isMovie: Boolean = false, category: String? = null): String {
-    if (category != null) {
-        when {
-            category.contains("중국") -> {
-                val cnThemes = listOf("대륙의 스케일, 압도적 대서사시", "화려한 무협과 신비로운 판타지", "가슴 절절한 애절한 로맨스", "궁중 암투와 치밀한 전략", "매혹적인 영상미의 시대극")
-                return cnThemes[index % cnThemes.size]
-            }
-            category.contains("일본") -> {
-                val jpThemes = listOf("특유의 감성, 몽글몽글한 로맨스", "소소하지만 확실한 행복, 일상물", "독특한 소재와 기발한 상상력", "청춘의 열정과 풋풋한 성장기", "깊은 여운을 남기는 미스터리 수사물")
-                return jpThemes[index % jpThemes.size]
-            }
-            category.contains("미국") || category.contains("영국") -> {
-                val enThemes = listOf("압도적 스케일, 헐리우드 화제작", "치밀한 구성의 고퀄리티 범죄 스릴러", "전 세계를 사로잡은 마성의 시리즈", "상상 그 이상! SF와 판타지의 정점", "강렬한 몰입감의 전문직 드라마")
-                return enThemes[index % enThemes.size]
-            }
-            category.contains("다큐") -> {
-                val docThemes = listOf("세상을 보는 새로운 시선", "경이로운 자연과 우주의 신비", "지적 호기심을 깨우는 기록들", "우리가 몰랐던 역사의 이면", "사실이 주는 묵직한 감동")
-                return docThemes[index % docThemes.size]
-            }
-            category == "라프텔" -> {
-                val laThemes = listOf("라프텔이 추천하는 명작 애니", "지금 이 순간, 가장 핫한 애니", "놓치면 후회할 인생 애니메이션", "숨겨진 띵작, 라프텔 셀렉션", "당신의 덕심을 깨울 고퀄리티 애니")
-                return laThemes[index % laThemes.size]
-            }
-        }
+// --- 테마 이름 생성기 (개선된 로직: 실제 폴더명 기반) ---
+fun getThemeTitle(originalName: String, category: String? = null): String {
+    if (originalName == "__STANDALONE__") {
+        return if (category != null) "$category 추천 작품" else "추천 콘텐츠"
     }
-    
-    return when {
-        index == 0 -> if (isMovie) "지금 가장 인기 있는 영화" else "지금 가장 핫한 화제작"
-        index == 1 -> if (isMovie) "최근 추가된 흥미로운 영화" else "새로운 정주행의 시작"
-        originalName.contains("ㄱ") || originalName.contains("가") -> if (isMovie) "박진감 넘치는 액션 블록버스터" else "심장이 뛰는 모험과 액션"
-        originalName.contains("ㄴ") || originalName.contains("나") -> if (isMovie) "가슴 따뜻해지는 힐링 시네마" else "포근하고 몽글몽글한 일상"
-        originalName.contains("ㄷ") || originalName.contains("다") -> if (isMovie) "손에 땀을 쥐는 서스펜스" else "치밀한 전개, 미스터리 스릴러"
-        originalName.contains("ㄹ") || originalName.contains("라") -> if (isMovie) "기분 좋아지는 유쾌한 코미디" else "지친 하루를 달래줄 웃음 코드"
-        originalName.contains("ㅁ") || originalName.contains("마") -> if (isMovie) "상상력을 자극하는 판타지 세계" else "압도적 스케일의 대서사시"
-        originalName.contains("ㅂ") || originalName.contains("바") -> if (isMovie) "강렬한 카리스마, 범죄 액션" else "숨 막히는 범죄 심리전"
-        originalName.contains("ㅅ") || originalName.contains("사") -> if (isMovie) "감성을 자극하는 휴먼 드라마" else "깊은 울림을 주는 인생 드라마"
-        originalName.contains("ㅇ") || originalName.contains("아") -> if (isMovie) "설렘 가득한 로맨틱 무비" else "심쿵 주의! 로맨스 정주행"
-        originalName.contains("ㅈ") || originalName.contains("자") -> if (isMovie) "리얼리티가 살아있는 명작" else "현실보다 더 리얼한 이야기"
-        originalName.contains("A") || originalName.contains("B") -> if (isMovie) "전 세계가 주목한 글로벌 화제작" else "언어의 장벽을 넘는 감동의 대작"
-        else -> {
-            val alternates = if (isMovie) {
-                listOf("시선을 사로잡는 영상미", "주말 밤을 책임질 영화", "시간 순삭! 몰입도 최강", "당신의 취향을 저격할 추천작", "숨겨진 보석 같은 명작")
-            } else {
-                listOf("한 번 시작하면 멈출 수 없는", "웰메이드 명품 시리즈", "주말 순삭! 정주행 가이드", "놓치면 후회할 인생 드라마", "탄탄한 스토리의 화제작")
-            }
-            alternates[index % alternates.size]
-        }
-    }
+    return originalName
 }
 
 // --- 번역 관련 유틸리티 ---
@@ -229,12 +186,37 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null): TmdbMeta
     val cleanTitle = title.cleanTitle(includeYear = false)
     
     val strategies = mutableListOf<String>()
+    
+    // 1. 한국어 제목 (한글, 공백, 숫자만 포함)
     val korTitle = cleanTitle.filter { it.isWhitespace() || it.isHangul() || it.isDigit() }.trim().replace(Regex("\\s+"), " ")
     if (korTitle.length >= 2) {
         if (year != null) strategies.add("$korTitle $year")
         strategies.add(korTitle)
+        
+        // 키워드 축소 (긴 제목 대응)
+        val words = korTitle.split(" ").filter { it.isNotBlank() }
+        if (words.size > 2) {
+            for (i in words.size - 1 downTo 2) {
+                strategies.add(words.take(i).joinToString(" "))
+            }
+        }
     }
     
+    // 2. 영어/로마자 제목 (한글 외 문자만 포함)
+    val engTitle = cleanTitle.filter { !it.isHangul() }.trim().replace(Regex("\\s+"), " ")
+    if (engTitle.length >= 3 && engTitle != korTitle) {
+        if (year != null) strategies.add("$engTitle $year")
+        strategies.add(engTitle)
+
+        // 영어 제목에 대한 키워드 축소
+        val words = engTitle.split(" ").filter { it.isNotBlank() }
+        if (words.size > 2) {
+            for (i in words.size - 1 downTo 2) {
+                strategies.add(words.take(i).joinToString(" "))
+            }
+        }
+    }
+
     val queryList = strategies.filter { it.isNotBlank() }.distinct()
     var finalMetadata: TmdbMetadata? = null
     var hasNetworkError = false
@@ -514,6 +496,7 @@ fun App(driver: SqlDriver) {
     var selectedForeignTab by rememberSaveable { mutableStateOf("다큐") }
     
     var koreanTvItems by remember { mutableStateOf<List<Category>>(emptyList()) }
+    var koreanCategories by remember { mutableStateOf<List<Pair<String, List<Series>>>>(emptyList()) }
     var explorerSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
 
     var foreignTvPathStack by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
@@ -539,6 +522,8 @@ fun App(driver: SqlDriver) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchCategory by rememberSaveable { mutableStateOf("전체") }
     var refreshTrigger by remember { mutableStateOf(0) }
+    
+    var selectedKoreanTab by rememberSaveable { mutableStateOf("") } // 국내 TV용 탭 선택 상태 추가
 
     val currentPathStrings = remember(currentScreen, moviePathStack, aniPathStack, foreignTvPathStack, koreanTvPathStack) {
         when (currentScreen) {
@@ -563,13 +548,13 @@ fun App(driver: SqlDriver) {
     val isExplorerSeriesMode by remember {
         derivedStateOf {
             (currentScreen == Screen.FOREIGN_TV && foreignTvItems.any { it.movies.isNotEmpty() && foreignTvPathStack.isNotEmpty() }) || 
-            (currentScreen == Screen.KOREAN_TV && koreanTvItems.any { it.movies.isNotEmpty() }) || 
+            (currentScreen == Screen.KOREAN_TV && koreanTvItems.any { it.movies.isNotEmpty() && koreanTvPathStack.isNotEmpty() }) || 
             (currentScreen == Screen.MOVIES && movieItems.any { it.movies.isNotEmpty() && moviePathStack.isNotEmpty() }) || 
             (currentScreen == Screen.ANIMATIONS && aniItems.any { it.movies.isNotEmpty() && aniPathStack.isNotEmpty() })
         }
     }
 
-    LaunchedEffect(currentScreen, foreignTvPathStack, koreanTvPathStack, moviePathStack, aniPathStack, selectedOnAirTab, selectedAniTab, selectedMovieTab, selectedForeignTab, refreshTrigger) {
+    LaunchedEffect(currentScreen, foreignTvPathStack, koreanTvPathStack, moviePathStack, aniPathStack, selectedOnAirTab, selectedAniTab, selectedMovieTab, selectedForeignTab, selectedKoreanTab, refreshTrigger) {
         supervisorScope {
             try {
                 errorMessage = null
@@ -601,16 +586,28 @@ fun App(driver: SqlDriver) {
                                     val foldersRaw = fetchCategoryList(targetPath)
                                     val rootRaw = fetchCategoryList("애니메이션")
                                     if (foldersRaw.isNotEmpty()) {
-                                        val rawList = coroutineScope {
-                                            foldersRaw.mapIndexed { index, catFolder ->
+                                        val fetchedData = coroutineScope {
+                                            foldersRaw.map { catFolder ->
                                                 async {
-                                                    val folders = fetchCategoryList("$targetPath/${catFolder.name}")
-                                                    val seriesList = folders.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
-                                                    getRandomThemeName(catFolder.name, index, isMovie = false, category = selectedAniTab) to seriesList
+                                                    val catContent = fetchCategoryList("$targetPath/${catFolder.name}")
+                                                    val isSeries = catContent.any { it.movies.isNotEmpty() }
+                                                    if (isSeries) {
+                                                        "__STANDALONE__" to listOf(Series(title = catFolder.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}"))
+                                                    } else {
+                                                        val seriesList = catContent.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
+                                                        catFolder.name to seriesList
+                                                    }
                                                 }
                                             }.awaitAll().filter { it.second.isNotEmpty() }
                                         }
-                                        aniCategories = rawList.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }
+                                        val standalone = fetchedData.filter { it.first == "__STANDALONE__" }.flatMap { it.second }
+                                        val themes = fetchedData.filter { it.first != "__STANDALONE__" }
+                                        val finalCategories = mutableListOf<Pair<String, List<Series>>>()
+                                        if (standalone.isNotEmpty()) { finalCategories.add(getThemeTitle("__STANDALONE__", selectedAniTab) to standalone) }
+                                        val (multi, single) = themes.partition { it.second.size > 10 }
+                                        multi.forEach { (name, list) -> finalCategories.add(getThemeTitle(name) to list) }
+                                        if (single.isNotEmpty()) finalCategories.add("기타 ${selectedAniTab} 작품" to single.flatMap { it.second })
+                                        aniCategories = finalCategories.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }.toList()
                                         aniItems = rootRaw
                                     } else { aniCategories = emptyList(); aniItems = rootRaw }
                                     lastAniPath = targetPath
@@ -640,16 +637,28 @@ fun App(driver: SqlDriver) {
                                     val foldersRaw = fetchCategoryList(targetPath)
                                     val rootRaw = fetchCategoryList("영화")
                                     if (foldersRaw.isNotEmpty()) {
-                                        val rawList = coroutineScope {
-                                            foldersRaw.mapIndexed { index, catFolder ->
+                                        val fetchedData = coroutineScope {
+                                            foldersRaw.map { catFolder ->
                                                 async {
-                                                    val folders = fetchCategoryList("$targetPath/${catFolder.name}")
-                                                    val seriesList = folders.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
-                                                    getRandomThemeName(catFolder.name, index, isMovie = true, category = selectedMovieTab) to seriesList
+                                                    val catContent = fetchCategoryList("$targetPath/${catFolder.name}")
+                                                    val isSeries = catContent.any { it.movies.isNotEmpty() }
+                                                    if (isSeries) {
+                                                        "__STANDALONE__" to listOf(Series(title = catFolder.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}"))
+                                                    } else {
+                                                        val seriesList = catContent.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
+                                                        catFolder.name to seriesList
+                                                    }
                                                 }
                                             }.awaitAll().filter { it.second.isNotEmpty() }
                                         }
-                                        movieCategories = rawList.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }
+                                        val standalone = fetchedData.filter { it.first == "__STANDALONE__" }.flatMap { it.second }
+                                        val themes = fetchedData.filter { it.first != "__STANDALONE__" }
+                                        val finalCategories = mutableListOf<Pair<String, List<Series>>>()
+                                        if (standalone.isNotEmpty()) { finalCategories.add(getThemeTitle("__STANDALONE__", selectedMovieTab) to standalone) }
+                                        val (multi, single) = themes.partition { it.second.size > 10 }
+                                        multi.forEach { (name, list) -> finalCategories.add(getThemeTitle(name) to list) }
+                                        if (single.isNotEmpty()) finalCategories.add("기타 ${selectedMovieTab} 작품" to single.flatMap { it.second })
+                                        movieCategories = finalCategories.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }.toList()
                                         movieItems = rootRaw.filter { it.name in listOf("제목", "최신", "UHD") }
                                     } else { movieCategories = emptyList(); movieItems = rootRaw.filter { it.name in listOf("제목", "최신", "UHD") } }
                                     lastMoviePath = targetPath
@@ -674,22 +683,33 @@ fun App(driver: SqlDriver) {
                         if (foreignTvPathStack.isEmpty()) {
                             val rootFolders = fetchCategoryList("외국TV")
                             val targetPath = "외국TV/$selectedForeignTab"
-                            
                             if (lastForeignPath != targetPath || refreshTrigger > 0) {
                                 scope.launch {
                                     isLoading = true
                                     val foldersRaw = fetchCategoryList(targetPath)
                                     if (foldersRaw.isNotEmpty()) {
-                                        val rawList = coroutineScope {
-                                            foldersRaw.mapIndexed { index, catFolder ->
+                                        val fetchedData = coroutineScope {
+                                            foldersRaw.map { catFolder ->
                                                 async {
-                                                    val folders = fetchCategoryList("$targetPath/${catFolder.name}")
-                                                    val seriesList = folders.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
-                                                    getRandomThemeName(catFolder.name, index, isMovie = false, category = selectedForeignTab) to seriesList
+                                                    val catContent = fetchCategoryList("$targetPath/${catFolder.name}")
+                                                    val isSeries = catContent.any { it.movies.isNotEmpty() }
+                                                    if (isSeries) {
+                                                        "__STANDALONE__" to listOf(Series(title = catFolder.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}"))
+                                                    } else {
+                                                        val seriesList = catContent.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
+                                                        catFolder.name to seriesList
+                                                    }
                                                 }
                                             }.awaitAll().filter { it.second.isNotEmpty() }
                                         }
-                                        foreignCategories = rawList.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }
+                                        val standalone = fetchedData.filter { it.first == "__STANDALONE__" }.flatMap { it.second }
+                                        val themes = fetchedData.filter { it.first != "__STANDALONE__" }
+                                        val finalCategories = mutableListOf<Pair<String, List<Series>>>()
+                                        if (standalone.isNotEmpty()) { finalCategories.add(getThemeTitle("__STANDALONE__", selectedForeignTab) to standalone) }
+                                        val (multi, single) = themes.partition { it.second.size > 10 }
+                                        multi.forEach { (name, list) -> finalCategories.add(getThemeTitle(name) to list) }
+                                        if (single.isNotEmpty()) finalCategories.add("기타 ${selectedForeignTab} 작품" to single.flatMap { it.second })
+                                        foreignCategories = finalCategories.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }.toList()
                                     } else { foreignCategories = emptyList() }
                                     foreignTvItems = rootFolders.filter { it.name in listOf("중국 드라마", "일본 드라마", "미국 드라마", "다큐", "기타 국가 드라마") }
                                     lastForeignPath = targetPath
@@ -711,35 +731,73 @@ fun App(driver: SqlDriver) {
                         }
                     }
                     Screen.KOREAN_TV -> {
-                        val path = if (koreanTvPathStack.isEmpty()) "국내TV" else "국내TV/${koreanTvPathStack.joinToString("/")}"
-                        if (lastKoreanPath != path || refreshTrigger > 0) {
-                            scope.launch {
-                                isLoading = true
-                                val raw = fetchCategoryList(path)
-                                koreanTvItems = if (koreanTvPathStack.isEmpty()) {
-                                    raw.filter { it.name != "[업로드]" }
-                                } else {
-                                    raw
+                        if (koreanTvPathStack.isEmpty()) {
+                            val rootFolders = fetchCategoryList("국내TV")
+                            val filterOptions = rootFolders.filter { it.name != "[업로드]" }
+                            if (filterOptions.isNotEmpty() && selectedKoreanTab.isEmpty()) { selectedKoreanTab = filterOptions.first().name }
+                            if (selectedKoreanTab.isNotEmpty()) {
+                                val targetPath = "국내TV/$selectedKoreanTab"
+                                if (lastKoreanPath != targetPath || refreshTrigger > 0) {
+                                    scope.launch {
+                                        isLoading = true
+                                        try {
+                                            val foldersRaw = fetchCategoryList(targetPath)
+                                            if (foldersRaw.isNotEmpty()) {
+                                                val fetchedData = coroutineScope {
+                                                    foldersRaw.map { catFolder ->
+                                                        async {
+                                                            val catContent = fetchCategoryList("$targetPath/${catFolder.name}")
+                                                            val isSeries = catContent.any { it.movies.isNotEmpty() }
+                                                            if (isSeries) {
+                                                                "__STANDALONE__" to listOf(Series(title = catFolder.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}"))
+                                                            } else {
+                                                                val seriesList = catContent.map { Series(title = it.name, episodes = emptyList(), fullPath = "$targetPath/${catFolder.name}/${it.name}") }
+                                                                catFolder.name to seriesList
+                                                            }
+                                                        }
+                                                    }.awaitAll().filter { it.second.isNotEmpty() }
+                                                }
+                                                val standalone = fetchedData.filter { it.first == "__STANDALONE__" }.flatMap { it.second }
+                                                val themes = fetchedData.filter { it.first != "__STANDALONE__" }
+                                                val finalCategories = mutableListOf<Pair<String, List<Series>>>()
+                                                if (standalone.isNotEmpty()) { finalCategories.add(getThemeTitle("__STANDALONE__", selectedKoreanTab) to standalone) }
+                                                val (multi, single) = themes.partition { it.second.size > 10 }
+                                                multi.forEach { (name, list) -> finalCategories.add(getThemeTitle(name) to list) }
+                                                if (single.isNotEmpty()) finalCategories.add("기타 ${selectedKoreanTab} 작품" to single.flatMap { it.second })
+                                                koreanCategories = finalCategories.groupBy { it.first }.map { (name, groups) -> name to groups.flatMap { it.second }.distinctBy { it.title } }.toList()
+                                            } else { koreanCategories = emptyList() }
+                                        } catch (e: Exception) { errorMessage = "국내 TV 데이터 로딩 중 오류 발생: ${e.message}"; koreanCategories = emptyList() }
+                                        finally { koreanTvItems = filterOptions; lastKoreanPath = targetPath; isLoading = false }
+                                    }
                                 }
-                                if (koreanTvItems.any { it.movies.isNotEmpty() }) { explorerSeries = koreanTvItems.flatMap { it.movies }.groupBySeries() }
-                                lastKoreanPath = path
-                                isLoading = false
+                            } else { koreanTvItems = filterOptions; koreanCategories = emptyList() }
+                        } else {
+                            val path = "국내TV/${koreanTvPathStack.joinToString("/")}"
+                            if (lastKoreanPath != path || refreshTrigger > 0) {
+                                scope.launch {
+                                    isLoading = true
+                                    try {
+                                        val raw = fetchCategoryList(path)
+                                        koreanTvItems = raw
+                                        if (raw.any { it.movies.isNotEmpty() }) { explorerSeries = raw.flatMap { it.movies }.groupBySeries() }
+                                        else { explorerSeries = emptyList() }
+                                        lastKoreanPath = path
+                                    } catch (e: Exception) { errorMessage = "데이터 로딩 중 오류 발생: ${e.message}"; koreanTvItems = emptyList(); explorerSeries = emptyList() }
+                                    finally { isLoading = false }
+                                }
                             }
                         }
                     }
                     else -> {}
                 }
-            } catch (e: Exception) {
-                errorMessage = "서버 연결에 실패했습니다.\n${e.message}"
-            } finally { isLoading = false }
+            } catch (e: Exception) { errorMessage = "서버 연결에 실패했습니다.\n${e.message}" } finally { isLoading = false }
         }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFE50914), background = Color.Black, surface = Color.Black)) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            if (errorMessage != null) {
-                ErrorScreen(message = errorMessage!!, onRetry = { refreshTrigger++ })
-            } else if (selectedMovie != null) {
+            if (errorMessage != null) { ErrorScreen(message = errorMessage!!, onRetry = { refreshTrigger++ }) }
+            else if (selectedMovie != null) {
                 VideoPlayerScreen(
                     movie = selectedMovie!!, playlist = moviePlaylist, initialPosition = initialPlaybackPosition, currentScreen = selectedItemScreen, pathStack = currentPathStrings, 
                     onBack = { selectedMovie = null; moviePlaylist = emptyList(); initialPlaybackPosition = 0L }, 
@@ -762,6 +820,7 @@ fun App(driver: SqlDriver) {
                         if (selectedItemScreen == Screen.ANIMATIONS && aniPathStack.size >= 1 && (aniPathStack.firstOrNull() == "라프텔" || aniPathStack.firstOrNull() == "시리즈")) { aniPathStack = emptyList() }
                         if (selectedItemScreen == Screen.MOVIES && moviePathStack.size >= 1 && (moviePathStack.firstOrNull() == "최신" || moviePathStack.firstOrNull() == "제목" || moviePathStack.firstOrNull() == "UHD")) { moviePathStack = emptyList() }
                         if (selectedItemScreen == Screen.FOREIGN_TV && foreignTvPathStack.size >= 1 && listOf("중국 드라마", "일본 드라마", "미국 드라마", "다큐", "기타 국가 드라마").any { it == (foreignTvPathStack.firstOrNull() ?: "") }) { foreignTvPathStack = emptyList() }
+                        if (selectedItemScreen == Screen.KOREAN_TV && koreanTvPathStack.isNotEmpty()) { koreanTvPathStack = emptyList() }
                     }, 
                     onSaveWatchHistory = saveWatchHistory,
                     onPlayFullScreen = { movie, position -> saveWatchHistory(movie, selectedItemScreen, currentPathStrings); initialPlaybackPosition = position; selectedMovie = movie; moviePlaylist = selectedSeries!!.episodes }
@@ -808,19 +867,16 @@ fun App(driver: SqlDriver) {
                                     Screen.HOME -> homeLatestSeries.isEmpty() && onAirSeries.isEmpty()
                                     Screen.ON_AIR -> (if(selectedOnAirTab == "라프텔 애니메이션") onAirSeries else onAirDramaSeries).isEmpty()
                                     Screen.FOREIGN_TV -> foreignCategories.isEmpty() && foreignTvItems.isEmpty()
-                                    Screen.KOREAN_TV -> koreanTvItems.isEmpty()
+                                    Screen.KOREAN_TV -> koreanCategories.isEmpty() && koreanTvItems.isEmpty()
                                     Screen.MOVIES -> movieCategories.isEmpty() && movieItems.isEmpty()
                                     Screen.ANIMATIONS -> aniCategories.isEmpty() && aniItems.isEmpty()
                                     else -> false
                                 }
                             }
                         }
-                        
                         val shouldShowFullLoading = isLoading && isServerDataEmpty
-
-                        if (shouldShowFullLoading) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.Red) }
-                        } else {
+                        if (shouldShowFullLoading) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Color.Red) } }
+                        else {
                             when (currentScreen) {
                                 Screen.HOME -> HomeScreen(watchHistory, homeLatestSeries, onAirSeries, homeScrollState, onWatchItemClick = { history ->
                                     val movie = Movie(history.id, history.title, history.thumbnailUrl, history.videoUrl)
@@ -859,7 +915,8 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                             LazyColumn(state = animationsScrollState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
-                                                items(aniCategories) { (themeName, seriesList) ->
+                                                items(aniCategories) { pair ->
+                                                    val (themeName, seriesList) = pair
                                                     MovieRow(
                                                         title = themeName, screen = Screen.ANIMATIONS, seriesList = seriesList,
                                                         onSeriesClick = { series, sc -> 
@@ -893,9 +950,7 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                         }
-                                    } else {
-                                        MovieExplorer(title = "애니메이션", screen = Screen.ANIMATIONS, pathStack = aniPathStack, items = aniItems, scrollState = animationsScrollState, onFolderClick = { aniPathStack = aniPathStack + it }, onBackClick = { if (aniPathStack.isNotEmpty()) aniPathStack = aniPathStack.dropLast(1) })
-                                    }
+                                    } else { MovieExplorer(title = "애니메이션", screen = Screen.ANIMATIONS, pathStack = aniPathStack, items = aniItems, scrollState = animationsScrollState, onFolderClick = { aniPathStack = aniPathStack + it }, onBackClick = { if (aniPathStack.isNotEmpty()) aniPathStack = aniPathStack.dropLast(1) }) }
                                 }
                                 Screen.MOVIES -> {
                                     if (moviePathStack.isEmpty()) {
@@ -914,7 +969,8 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                             LazyColumn(state = moviesScrollState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
-                                                items(movieCategories) { (themeName, seriesList) ->
+                                                items(movieCategories) { pair ->
+                                                    val (themeName, seriesList) = pair
                                                     MovieRow(
                                                         title = themeName, screen = Screen.MOVIES, seriesList = seriesList,
                                                         onSeriesClick = { series, sc -> 
@@ -935,9 +991,7 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                         }
-                                    } else {
-                                        MovieExplorer(title = "영화", screen = Screen.MOVIES, pathStack = moviePathStack, items = movieItems, scrollState = moviesScrollState, onFolderClick = { moviePathStack = moviePathStack + it }, onBackClick = { if (moviePathStack.isNotEmpty()) moviePathStack = moviePathStack.dropLast(1) })
-                                    }
+                                    } else { MovieExplorer(title = "영화", screen = Screen.MOVIES, pathStack = moviePathStack, items = movieItems, scrollState = moviesScrollState, onFolderClick = { moviePathStack = moviePathStack + it }, onBackClick = { if (moviePathStack.isNotEmpty()) moviePathStack = moviePathStack.dropLast(1) }) }
                                 }
                                 Screen.FOREIGN_TV -> {
                                     if (foreignTvPathStack.isEmpty()) {
@@ -956,7 +1010,8 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                             LazyColumn(state = foreignTvScrollState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
-                                                items(foreignCategories) { (themeName, seriesList) ->
+                                                items(foreignCategories) { pair ->
+                                                    val (themeName, seriesList) = pair
                                                     MovieRow(
                                                         title = themeName, screen = Screen.FOREIGN_TV, seriesList = seriesList,
                                                         onSeriesClick = { series, sc -> 
@@ -977,27 +1032,49 @@ fun App(driver: SqlDriver) {
                                                 }
                                             }
                                         }
-                                    } else {
-                                        MovieExplorer(title = "외국 TV", screen = Screen.FOREIGN_TV, pathStack = foreignTvPathStack, items = foreignTvItems, scrollState = foreignTvScrollState, onFolderClick = { foreignTvPathStack = foreignTvPathStack + it }, onBackClick = { if (foreignTvPathStack.isNotEmpty()) foreignTvPathStack = foreignTvPathStack.dropLast(1) })
-                                    }
+                                    } else { MovieExplorer(title = "외국 TV", screen = Screen.FOREIGN_TV, pathStack = foreignTvPathStack, items = foreignTvItems, scrollState = foreignTvScrollState, onFolderClick = { foreignTvPathStack = foreignTvPathStack + it }, onBackClick = { if (foreignTvPathStack.isNotEmpty()) foreignTvPathStack = foreignTvPathStack.dropLast(1) }) }
                                 }
                                 Screen.KOREAN_TV -> {
-                        val path = if (koreanTvPathStack.isEmpty()) "국내TV" else "국내TV/${koreanTvPathStack.joinToString("/")}"
-                        if (lastKoreanPath != path || refreshTrigger > 0) {
-                            scope.launch {
-                                isLoading = true
-                                val raw = fetchCategoryList(path)
-                                koreanTvItems = if (koreanTvPathStack.isEmpty()) {
-                                    raw.filter { it.name != "[업로드]" }
-                                } else {
-                                    raw
+                                    if (koreanTvPathStack.isEmpty()) {
+                                        Column(modifier = Modifier.fillMaxSize()) {
+                                            var expanded by remember { mutableStateOf(false) }
+                                            Box(modifier = Modifier.padding(16.dp)) {
+                                                OutlinedButton(onClick = { expanded = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White), border = BorderStroke(1.dp, Color.Gray)) {
+                                                    Text(text = if (selectedKoreanTab.isNotEmpty()) selectedKoreanTab else "카테고리 선택", fontWeight = FontWeight.Bold)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                                }
+                                                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(Color.Black)) {
+                                                    koreanTvItems.map { it.name }.forEach { tab ->
+                                                        DropdownMenuItem(text = { Text(tab, color = Color.White) }, onClick = { selectedKoreanTab = tab; expanded = false })
+                                                    }
+                                                }
+                                            }
+                                            LazyColumn(state = koreanTvScrollState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
+                                                items(koreanCategories) { pair ->
+                                                    val (themeName, seriesList) = pair
+                                                    MovieRow(
+                                                        title = themeName, screen = Screen.KOREAN_TV, seriesList = seriesList,
+                                                        onSeriesClick = { series, sc -> 
+                                                            scope.launch {
+                                                                isLoading = true
+                                                                try {
+                                                                    if (series.fullPath != null) {
+                                                                        val raw: List<Category> = client.get("$BASE_URL/list?path=${series.fullPath.encodeURLParameter()}").body()
+                                                                        koreanTvPathStack = series.fullPath.removePrefix("국내TV/").split("/")
+                                                                        selectedSeries = series.copy(episodes = raw.flatMap { it.movies })
+                                                                        selectedItemScreen = sc
+                                                                    }
+                                                                } catch (e: Exception) { }
+                                                                finally { isLoading = false }
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    } else { MovieExplorer(title = "국내 TV", screen = Screen.KOREAN_TV, pathStack = koreanTvPathStack, items = koreanTvItems, scrollState = koreanTvScrollState, onFolderClick = { koreanTvPathStack = koreanTvPathStack + it }, onBackClick = { if (koreanTvPathStack.isNotEmpty()) koreanTvPathStack = koreanTvPathStack.dropLast(1) }) }
                                 }
-                                if (koreanTvItems.any { it.movies.isNotEmpty() }) { explorerSeries = koreanTvItems.flatMap { it.movies }.groupBySeries() }
-                                lastKoreanPath = path
-                                isLoading = false
-                            }
-                        }
-                    }
                                 Screen.SEARCH -> SearchScreen(query = searchQuery, onQueryChange = { searchQuery = it }, selectedCategory = searchCategory, onCategoryChange = { searchCategory = it }, recentQueries = recentQueries, onSaveQuery = { q -> scope.launch { searchHistoryDataSource.insertQuery(q, currentTimeMillis()) } }, onDeleteQuery = { q -> scope.launch { searchHistoryDataSource.deleteQuery(q) } }, onClearAll = { scope.launch { searchHistoryDataSource.clearAll() } }, onSeriesClick = { s, sc -> selectedSeries = s; selectedItemScreen = sc })
                                 else -> {}
                             }
@@ -1131,7 +1208,7 @@ fun MovieExplorer(title: String, screen: Screen, pathStack: List<String>, items:
         NasAppBar(title = if (pathStack.isEmpty()) title else pathStack.last(), onBack = if (pathStack.isNotEmpty()) onBackClick else null)
         LazyColumn(state = scrollState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
             items(items) { item ->
-                ListItem(headlineContent = { Text(text = item.name, color = Color.White) }, leadingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Color.White) }, trailingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.DarkGray) }, modifier = Modifier.clickable { onFolderClick(item.name) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                ListItem(headlineContent = { Text(text = item.name, color = Color.White) }, leadingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = null, tint = Color.White) }, trailingContent = { Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.DarkGray) }, modifier = Modifier.clickable { onFolderClick(item.name) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent) )
             }
         }
     }
@@ -1148,7 +1225,8 @@ fun NasAppBar(title: String, onBack: (() -> Unit)? = null) {
 @Composable
 fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen: Screen, pathStack: List<String>, onBack: () -> Unit, onSaveWatchHistory: (Movie, Screen, List<String>) -> Unit, onPlayFullScreen: (Movie, Long) -> Unit) {
     val scope = rememberCoroutineScope()
-    var playingMovie by remember(series) { mutableStateOf(series.episodes.firstOrNull()) }
+    var episodes by remember(series) { mutableStateOf(series.episodes) }
+    var playingMovie by remember(series, episodes) { mutableStateOf(episodes.firstOrNull()) }
     var metadata by remember(series) { mutableStateOf<TmdbMetadata?>(null) }
     var credits by remember(series) { mutableStateOf<List<TmdbCast>>(emptyList()) }
     var seasonEpisodes by remember(series) { mutableStateOf<List<TmdbEpisode>>(emptyList()) }
@@ -1156,11 +1234,17 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
     val typeHint = if (currentScreen == Screen.MOVIES || currentScreen == Screen.LATEST) "movie" else "tv"
     LaunchedEffect(playingMovie) { playingMovie?.let { onSaveWatchHistory(it, currentScreen, pathStack) } }
     LaunchedEffect(series) { 
+        if (episodes.isEmpty() && series.fullPath != null) {
+            try {
+                val raw: List<Category> = client.get("$BASE_URL/list?path=${series.fullPath.encodeURLParameter()}").body()
+                episodes = raw.flatMap { it.movies }
+            } catch (e: Exception) {}
+        }
         val meta = fetchTmdbMetadata(series.title, typeHint)
         metadata = meta
         if (meta.tmdbId != null) {
             credits = fetchTmdbCredits(meta.tmdbId, meta.mediaType)
-            val seasonNum = series.episodes.firstOrNull()?.title?.extractSeason() ?: 1
+            val seasonNum = episodes.firstOrNull()?.title?.extractSeason() ?: 1
             seasonEpisodes = fetchTmdbSeasonDetails(meta.tmdbId, seasonNum)
         }
     }
@@ -1170,8 +1254,8 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
         Box(modifier = Modifier.fillMaxWidth().height(210.dp).background(Color.DarkGray)) { 
             playingMovie?.let { movie -> 
                 VideoPlayer(url = createVideoServeUrl(currentScreen, pathStack, movie, tabName = categoryTitle), modifier = Modifier.fillMaxSize(), initialPosition = 0L, onPositionUpdate = { currentPosition = it }, onFullscreenClick = { onPlayFullScreen(movie, currentPosition) }, onVideoEnded = {
-                    val currentIndex = series.episodes.indexOfFirst { it.id == movie.id }
-                    if (currentIndex != -1 && currentIndex < series.episodes.size - 1) { playingMovie = series.episodes[currentIndex + 1] }
+                    val currentIndex = episodes.indexOfFirst { it.id == movie.id }
+                    if (currentIndex != -1 && currentIndex < episodes.size - 1) { playingMovie = episodes[currentIndex + 1] }
                 })
             }
         }
@@ -1204,7 +1288,7 @@ fun SeriesDetailScreen(series: Series, categoryTitle: String = "", currentScreen
                 }
             }
             item { Text(text = "에피소드", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)) }
-            items(series.episodes) { ep -> 
+            items(episodes) { ep ->
                 val isPlaying = playingMovie?.id == ep.id
                 val epNum = ep.title.extractEpisode()?.filter { it.isDigit() }?.toIntOrNull()
                 val epMetadata = seasonEpisodes.find { it.episodeNumber == epNum }
