@@ -174,7 +174,7 @@ fun getRandomThemeName(originalName: String, index: Int, isMovie: Boolean = fals
 
     if (category != null) {
         when {
-            // --- 애니메이션 카테고리 연관성 강화 ---
+            // --- 애니메이션 카테고리 연관성 강화 ---a
             category == "라프텔" -> {
                 val laThemes = listOf("라프텔 추천 명작 애니", "지금 이 순간, 가장 핫한 애니", "놓치면 후회할 인생 애니메이션", "숨겨진 띵작, 라프텔 셀렉션", "당신의 덕심을 깨울 고퀄리티 애니", "취향 저격! 라프텔 인기작")
                 return laThemes[(index - 2) % laThemes.size]
