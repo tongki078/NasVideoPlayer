@@ -2,17 +2,12 @@ package org.nas.videoplayer.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,20 +47,25 @@ fun TmdbAsyncImage(
         }
     }
     
-    Box(modifier = modifier.background(Color(0xFF1A1A1A))) {
-        if (imageUrl != null) {
+    Box(
+        modifier = modifier
+            .background(shimmerBrush(showShimmer = isLoading && !isError))
+    ) {
+        if (imageUrl != null && !isLoading) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalPlatformContext.current)
                     .data(imageUrl)
-                    .crossfade(200)
+                    .crossfade(300)
                     .build(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = contentScale,
-                onError = { isError = true }
+                onSuccess = { isLoading = false },
+                onError = { isError = true; isLoading = false }
             )
         }
-        if (isError && !isLoading) {
+        
+        if (isError && !isLoading && imageUrl == null) {
             Box(Modifier.fillMaxSize().padding(8.dp), Alignment.Center) {
                 Text(
                     text = title.cleanTitle(includeYear = false), 
@@ -76,13 +76,6 @@ fun TmdbAsyncImage(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-        }
-        if (isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.align(Alignment.Center).size(20.dp),
-                color = Color.Red,
-                strokeWidth = 2.dp
-            )
         }
     }
 }
