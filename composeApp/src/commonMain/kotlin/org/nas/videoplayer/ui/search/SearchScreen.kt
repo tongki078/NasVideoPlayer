@@ -16,7 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,6 +26,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.nas.videoplayer.*
 import org.nas.videoplayer.data.SearchHistory
 import org.nas.videoplayer.domain.model.Series
 import org.nas.videoplayer.ui.common.TmdbAsyncImage
@@ -59,10 +60,9 @@ fun SearchScreen(
         if (isLoading) {
             SearchSkeletonGrid()
         } else if (query.isEmpty()) {
-            // 검색어가 비어있을 때, 최근 검색어 리스트를 새로운 UI로 표시
             RecentSearchesList(
                 queries = recentQueries,
-                onQueryClick = onQueryChange, // 클릭 시 검색창에 텍스트 설정
+                onQueryClick = onQueryChange,
                 onDeleteClick = onDeleteQuery
             )
         } else {
@@ -164,6 +164,12 @@ private fun RecentSearchItem(
     onQueryClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
+    var metadata by remember(history.query) { mutableStateOf<TmdbMetadata?>(null) }
+    
+    LaunchedEffect(history.query) {
+        metadata = fetchTmdbMetadata(history.query)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -171,7 +177,6 @@ private fun RecentSearchItem(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. 포스터 이미지 (검색어 기반으로 로드)
         Box(
             modifier = Modifier
                 .width(140.dp)
@@ -185,26 +190,36 @@ private fun RecentSearchItem(
             )
         }
 
-        // 2. 검색어 텍스트
-        Text(
-            text = history.query,
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 12.dp)
-        )
+        ) {
+            Text(
+                text = history.query,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = metadata?.overview ?: "상세 정보가 없습니다.",
+                color = Color.Gray,
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 16.sp
+            )
+        }
 
-        // 3. 삭제 버튼
         IconButton(onClick = onDeleteClick) {
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Delete",
-                tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(20.dp)
             )
         }
     }
