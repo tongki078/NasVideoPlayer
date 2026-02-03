@@ -77,7 +77,9 @@ actual fun VideoPlayer(
                 val allowedSet = NSMutableCharacterSet.characterSetWithCharactersInString(":/?#[]@!$&'()*+,;=")
                 allowedSet.formUnionWithCharacterSet(NSCharacterSet.URLQueryAllowedCharacterSet)
                 allowedSet.formUnionWithCharacterSet(NSCharacterSet.URLPathAllowedCharacterSet)
-                val encodedUrl = (url as NSString).stringByAddingPercentEncodingWithAllowedCharacters(allowedSet)
+                
+                val nsStringUrl = url as NSString
+                val encodedUrl = nsStringUrl.stringByAddingPercentEncodingWithAllowedCharacters(allowedSet)
                 NSURL.URLWithString(encodedUrl ?: url)
             }
         } catch (e: Exception) {
@@ -86,15 +88,17 @@ actual fun VideoPlayer(
 
         player.pause()
         
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, lifestyle Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        val headers = NSDictionary.dictionaryWithObject(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forKey = "User-Agent" as NSCopyingProtocol
         )
         
-        val assetOptions = mapOf<Any?, Any?>(
-            "AVURLAssetHTTPHeaderFieldsKey" to headers
+        val assetOptions = NSDictionary.dictionaryWithObject(
+            headers,
+            forKey = "AVURLAssetHTTPHeaderFieldsKey" as NSCopyingProtocol
         )
 
-        val asset = AVURLAsset.URLAssetWithURL(nsUrl, options = assetOptions)
+        val asset = AVURLAsset.URLAssetWithURL(nsUrl, options = assetOptions as Map<Any?, *>)
         val item = AVPlayerItem.playerItemWithAsset(asset)
         
         item.preferredForwardBufferDuration = 5.0
@@ -108,7 +112,6 @@ actual fun VideoPlayer(
         
         player.replaceCurrentItemWithPlayerItem(item)
 
-        // 초기 위치 설정
         if (initialPosition > 0) {
             val cmTime = CMTimeMake((initialPosition / 1000).toLong(), 1)
             player.seekToTime(cmTime)
@@ -123,13 +126,12 @@ actual fun VideoPlayer(
                     val options = group.options as List<AVMediaSelectionOption>
                     if (options.isNotEmpty()) {
                         val target = options.find { opt ->
-                            val selectionOption = opt as AVMediaSelectionOption
-                            selectionOption.extendedLanguageTag?.contains("ko") == true || 
-                            selectionOption.displayName.contains("Korean", ignoreCase = true) ||
-                            selectionOption.displayName.contains("한국어", ignoreCase = true)
+                            opt.extendedLanguageTag?.contains("ko") == true || 
+                            opt.displayName.contains("Korean", ignoreCase = true) ||
+                            opt.displayName.contains("한국어", ignoreCase = true)
                         } ?: options.first()
                         
-                        item.selectMediaOption(target as AVMediaSelectionOption, inMediaSelectionGroup = group)
+                        item.selectMediaOption(target, inMediaSelectionGroup = group)
                     }
                 }
 

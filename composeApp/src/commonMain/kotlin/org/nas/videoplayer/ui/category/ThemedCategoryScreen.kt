@@ -34,7 +34,7 @@ fun ThemedCategoryScreen(
     repository: VideoRepository,
     selectedMode: Int,
     onModeChange: (Int) -> Unit,
-    lazyListState: LazyListState = rememberLazyListState(), // 스크롤 상태 보존을 위해 추가
+    lazyListState: LazyListState = rememberLazyListState(), // 스크롤 상태 보존
     onSeriesClick: (Series) -> Unit
 ) {
     val isAirScreen = categoryName == "방송중"
@@ -180,7 +180,7 @@ fun ThemedCategoryScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(), 
-                state = lazyListState, // 호이스팅된 상태 적용
+                state = lazyListState,
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
                 items(themedSections) { (title, seriesList) ->

@@ -14,7 +14,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -24,10 +23,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.nas.videoplayer.ui.common.TmdbAsyncImage
+import androidx.compose.ui.unit.sp
 import org.nas.videoplayer.data.SearchHistory
 import org.nas.videoplayer.domain.model.Series
+import org.nas.videoplayer.ui.common.TmdbAsyncImage
 import org.nas.videoplayer.ui.common.shimmerBrush
 
 @Composable
@@ -44,27 +45,24 @@ fun SearchScreen(
     onSeriesClick: (Series) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).statusBarsPadding()) {
-        // 1. 검색창
         SearchTextField(
             query = query,
             onQueryChange = onQueryChange,
             onSaveQuery = onSaveQuery
         )
 
-        // 2. 카테고리 필터
         CategoryFilters(
             selectedCategory = selectedCategory,
             onCategoryChange = onCategoryChange
         )
 
-        // 3. 결과 표시부 (로딩 / 최근검색어 / 결과그리드)
         if (isLoading) {
-            // 로딩 아이콘 제거 및 스켈레톤 그리드 표시
             SearchSkeletonGrid()
         } else if (query.isEmpty()) {
-            RecentQueriesList(
+            // 검색어가 비어있을 때, 최근 검색어 리스트를 새로운 UI로 표시
+            RecentSearchesList(
                 queries = recentQueries,
-                onQueryClick = onQueryChange,
+                onQueryClick = onQueryChange, // 클릭 시 검색창에 텍스트 설정
                 onDeleteClick = onDeleteQuery
             )
         } else {
@@ -131,27 +129,83 @@ private fun CategoryFilters(
 }
 
 @Composable
-private fun RecentQueriesList(
+private fun RecentSearchesList(
     queries: List<SearchHistory>,
     onQueryClick: (String) -> Unit,
     onDeleteClick: (String) -> Unit
 ) {
-    if (queries.isNotEmpty()) {
-        Text("최근 검색어", Modifier.padding(16.dp), color = Color.White, fontWeight = FontWeight.Bold)
-        LazyColumn {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = "최근 검색어",
+            modifier = Modifier.padding(16.dp),
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 20.sp
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             items(queries) { history ->
-                ListItem(
-                    headlineContent = { Text(history.query, color = Color.White) },
-                    leadingContent = { Icon(Icons.Default.Refresh, null, tint = Color.Gray) },
-                    trailingContent = {
-                        IconButton(onClick = { onDeleteClick(history.query) }) {
-                            Icon(Icons.Default.Close, null, tint = Color.Gray)
-                        }
-                    },
-                    modifier = Modifier.clickable { onQueryClick(history.query) },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                RecentSearchItem(
+                    history = history,
+                    onQueryClick = { onQueryClick(history.query) },
+                    onDeleteClick = { onDeleteClick(history.query) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun RecentSearchItem(
+    history: SearchHistory,
+    onQueryClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onQueryClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 1. 포스터 이미지 (검색어 기반으로 로드)
+        Box(
+            modifier = Modifier
+                .width(140.dp)
+                .height(80.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color.DarkGray)
+        ) {
+            TmdbAsyncImage(
+                title = history.query,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // 2. 검색어 텍스트
+        Text(
+            text = history.query,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 12.dp)
+        )
+
+        // 3. 삭제 버튼
+        IconButton(onClick = onDeleteClick) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Delete",
+                tint = Color.White,
+                modifier = Modifier.size(28.dp)
+            )
         }
     }
 }

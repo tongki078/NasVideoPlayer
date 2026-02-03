@@ -65,14 +65,12 @@ fun App(driver: SqlDriver) {
     var selectedMovie by remember { mutableStateOf<Movie?>(null) }
     var moviePlaylist by remember { mutableStateOf<List<Movie>>(emptyList()) }
     
-    // 재생 위치 관리
     var lastPlaybackPosition by rememberSaveable { mutableStateOf(0L) }
 
     var homeLatestSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
     var homeAnimations by remember { mutableStateOf<List<Series>>(emptyList()) }
     var isHomeLoading by remember { mutableStateOf(false) } 
     
-    // 각 화면 스크롤 상태 보존
     val homeLazyListState = rememberLazyListState()
     val themedCategoryLazyListState = rememberLazyListState()
 
