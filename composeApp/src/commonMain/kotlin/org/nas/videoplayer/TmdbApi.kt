@@ -10,9 +10,7 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 
 // TMDB 관련 상수
 const val TMDB_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3OGNiYWQ0ZjQ3NzcwYjYyYmZkMTcwNTA2NDIwZDQyYyIsIm5iZiI6MTY1MzY3NTU4MC45MTUsInN1YiI6IjYyOTExNjNjMTI0MjVjMDA1MjI0ZGQzNCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3YU0WuIx_WDo6nTRKehRtn4N5I4uCgjI1tlpkqfsUhk"
@@ -80,18 +78,26 @@ data class TmdbRole(val character: String, @SerialName("episode_count") val epis
 
 internal val tmdbCache = mutableMapOf<String, TmdbMetadata>()
 
-// --- 제목 정제 및 추출 로직 ---
 fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = true): String {
     var cleaned = this
     if (cleaned.contains(".")) { val ext = cleaned.substringAfterLast('.'); if (ext.length in 2..4) cleaned = cleaned.substringBeforeLast('.') }
+    
+    // 1. 한글/영어 붙어있는 경우 띄어쓰기 추가
     cleaned = Regex("([가-힣])([a-zA-Z0-9])").replace(cleaned, "$1 $2")
     cleaned = Regex("([a-zA-Z0-9])([가-힣])").replace(cleaned, "$1 $2")
     
+    // 2. 정렬용 접두어 제거 (예: 01. , 0Z. , [01] 등)
+    cleaned = Regex("^\\d+[.\\s_-]+").replace(cleaned, "")
+    cleaned = Regex("^[a-zA-Z]\\d+[.\\s_-]+").replace(cleaned, "")
+    cleaned = Regex("^\\[\\d+\\]\\s*").replace(cleaned, "")
+    
+    // 3. 연도 추출 및 제거
     val yearMatch = Regex("\\((19|20)\\d{2}\\)|(?<!\\d)(19|20)\\d{2}(?!\\d)").find(cleaned)
     val yearStr = yearMatch?.value?.replace("(", "")?.replace(")", "")
     if (yearMatch != null) cleaned = cleaned.replace(yearMatch.value, " ")
     
     cleaned = Regex("\\[.*?\\]|\\(.*?\\)").replace(cleaned, " ")
+    
     if (!keepAfterHyphen) {
         cleaned = Regex("(?i)[.\\s_](?:S\\d+E\\d+|S\\d+|E\\d+|\\d+\\s*(?:화|회|기)|Season\\s*\\d+|Part\\s*\\d+).*").replace(cleaned, "")
     }
@@ -99,7 +105,7 @@ fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = t
     cleaned = Regex("(?i)[.\\s_](?:더빙|자막|무삭제|\\d{3,4}p|WEB-DL|WEBRip|Bluray|HDRip|BDRip|DVDRip|H\\.?26[45]|x26[45]|HEVC|AAC|DTS|AC3|DDP|Dual|Atmos|REPACK|10bit|REMUX|OVA|OAD|ONA|TV판|극장판|FLAC|xvid|DivX|MKV|MP4|AVI|속편|무리무리|1부|2부|파트|완결).*").replace(cleaned, "")
     cleaned = Regex("[._\\-::!?【】『』「」\"'#@*※]").replace(cleaned, " ")
     
-    // 시퀄 번호 보존 (1000 이상 연도만 제거)
+    // 4. 시퀄 번호 보존 (1000 이상 연도만 제거)
     val match = Regex("[.\\s_](\\d+)$").find(" $cleaned")
     if (match != null) {
         val num = match.groupValues[1].toInt()
@@ -108,7 +114,7 @@ fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = t
 
     cleaned = Regex("\\s+").replace(cleaned, " ").trim()
     if (includeYear && yearStr != null) cleaned = "$cleaned ($yearStr)"
-    return cleaned
+    return if (cleaned.isBlank()) this else cleaned
 }
 
 fun String.extractEpisode(): String? {
@@ -137,15 +143,10 @@ suspend fun translateToKorean(text: String): String {
         val response: String = tmdbClient.get(url).body()
         val jsonArray = Json.parseToJsonElement(response).jsonArray
         val translatedParts = jsonArray[0].jsonArray
-        translatedParts.joinToString("") { part -> 
-            part.jsonArray[0].jsonPrimitive.content 
-        }
+        translatedParts.joinToString("") { part -> part.jsonArray[0].jsonPrimitive.content }
     } catch (e: Exception) { text }
 }
 
-/**
- * 1번 작업: 고도화된 다단계 정밀 검색 전략 (Ultimate)
- */
 suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null): TmdbMetadata {
     if (TMDB_API_KEY.isBlank()) return TmdbMetadata()
     tmdbCache[title]?.let { return it }
@@ -175,21 +176,15 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null): TmdbMeta
     for ((q, lang, y) in searchStrategies.distinct()) {
         val (res, error) = searchTmdb(q, lang, typeHint, y)
         if (error != null) { hasNetworkError = true; break }
-        
-        // 포스터가 있는 결과를 찾으면 즉시 채택
-        if (res != null && res.posterUrl != null) {
+        if (res != null && (res.posterUrl != null || res.tmdbId != null)) {
             finalMetadata = res
-            break
-        }
-        // 포스터는 없더라도 ID라도 찾았으면 일단 보관 (더 나은 검색 단계에서 포스터를 찾을 수도 있음)
-        if (res != null && finalMetadata == null) {
-            finalMetadata = res
+            if (res.posterUrl != null) break
         }
     }
 
     var result = finalMetadata ?: TmdbMetadata()
 
-    if (result.posterUrl == null && result.tmdbId != null) {
+    if (result.posterUrl == null && result.tmdbId != null && result.mediaType != null) {
         val credits = fetchTmdbCredits(result.tmdbId!!, result.mediaType)
         val firstCastProfilePath = credits.firstOrNull { !it.profilePath.isNullOrBlank() }?.profilePath
         if (firstCastProfilePath != null) {
@@ -197,7 +192,9 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null): TmdbMeta
         }
     }
 
-    if (!result.overview.isNullOrBlank()) { result = result.copy(overview = translateToKorean(result.overview!!)) }
+    if (!result.overview.isNullOrBlank() && !result.overview!!.contains(Regex("[가-힣]"))) {
+        result = result.copy(overview = translateToKorean(result.overview!!))
+    }
 
     if (!hasNetworkError) tmdbCache[title] = result
     return result
@@ -206,40 +203,35 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null): TmdbMeta
 private suspend fun searchTmdb(query: String, language: String?, typeHint: String? = null, year: String? = null): Pair<TmdbMetadata?, Exception?> {
     if (query.isBlank()) return null to null
     return try {
-        val endpoints = if (typeHint != null) listOf(typeHint) else listOf("movie", "tv")
-        var bestResult: TmdbMetadata? = null
-        
-        for (endpoint in endpoints) {
-            val response: TmdbSearchResponse = tmdbClient.get("$TMDB_BASE_URL/search/$endpoint") {
-                if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
-                else parameter("api_key", TMDB_API_KEY)
-                parameter("query", query)
-                if (language != null) parameter("language", language)
-                if (year != null) {
-                    if (endpoint == "movie") parameter("primary_release_year", year)
-                    else if (endpoint == "tv") parameter("first_air_date_year", year)
-                }
-                parameter("include_adult", "false")
-            }.body()
-
-            val results = response.results.filter { it.mediaType != "person" }
-            if (results.isNotEmpty()) {
-                val result = results.sortedWith(
-                    compareByDescending<TmdbResult> { it.posterPath != null }
-                        .thenByDescending { if (language == "ko-KR") it.originCountry?.contains("KR") == true else false }
-                        .thenByDescending { it.voteCount ?: 0 }
-                ).firstOrNull()
-
-                if (result != null) {
-                    val path = result.posterPath ?: result.backdropPath
-                    val posterUrl = path?.let { "$TMDB_IMAGE_BASE$TMDB_POSTER_SIZE_MEDIUM$it" }
-                    val mediaType = result.mediaType ?: endpoint
-                    bestResult = TmdbMetadata(tmdbId = result.id, mediaType = mediaType, posterUrl = posterUrl, overview = result.overview, genreIds = result.genreIds ?: emptyList())
-                    if (posterUrl != null) break
-                }
+        val endpoint = if (typeHint != null) typeHint else "multi"
+        val response: TmdbSearchResponse = tmdbClient.get("$TMDB_BASE_URL/search/$endpoint") {
+            if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
+            else parameter("api_key", TMDB_API_KEY)
+            parameter("query", query)
+            if (language != null) parameter("language", language)
+            if (year != null) {
+                if (endpoint == "movie") parameter("primary_release_year", year)
+                else if (endpoint == "tv") parameter("first_air_date_year", year)
+                else parameter("year", year)
             }
-        }
-        Pair(bestResult, null)
+            parameter("include_adult", "false")
+        }.body()
+
+        val results = response.results.filter { it.mediaType != "person" }
+        if (results.isEmpty()) return null to null
+
+        val result = results.sortedWith(
+            compareByDescending<TmdbResult> { it.posterPath != null }
+                .thenByDescending { if (language == "ko-KR") it.originCountry?.contains("KR") == true else false }
+                .thenByDescending { it.voteCount ?: 0 }
+        ).firstOrNull()
+
+        if (result != null) {
+            val path = result.posterPath ?: result.backdropPath
+            val posterUrl = path?.let { "$TMDB_IMAGE_BASE$TMDB_POSTER_SIZE_MEDIUM$it" }
+            val mediaType = result.mediaType ?: typeHint ?: "movie"
+            Pair(TmdbMetadata(tmdbId = result.id, mediaType = mediaType, posterUrl = posterUrl, overview = result.overview, genreIds = result.genreIds ?: emptyList()), null)
+        } else Pair(null, null)
     } catch (e: Exception) { Pair(null, e) }
 }
 
@@ -266,4 +258,9 @@ suspend fun fetchTmdbCredits(tmdbId: Int, mediaType: String?): List<TmdbCast> {
         }.body()
         response.cast.take(30)
     } catch (e: Exception) { emptyList() }
+}
+
+fun getRandomThemeName(originalName: String, index: Int, isMovie: Boolean = false, category: String? = null): String {
+    val alternates = if (isMovie) listOf("시선을 사로잡는 영화", "주말 밤 책임질 명작", "시간 순삭 몰입도 최강") else listOf("한 번 시작하면 멈출 수 없는", "웰메이드 명품 시리즈", "놓치면 후회할 인생 드라마")
+    return alternates[index % alternates.size]
 }

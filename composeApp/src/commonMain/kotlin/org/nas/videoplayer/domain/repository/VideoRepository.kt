@@ -8,4 +8,5 @@ interface VideoRepository {
     suspend fun searchVideos(query: String, category: String = "전체"): List<Series>
     suspend fun getLatestMovies(): List<Series>
     suspend fun getAnimations(): List<Series>
+    suspend fun getDramas(): List<Series> // 드라마 추가
 }

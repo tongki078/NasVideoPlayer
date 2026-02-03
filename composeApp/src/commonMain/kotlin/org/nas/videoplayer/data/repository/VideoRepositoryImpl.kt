@@ -44,6 +44,13 @@ class VideoRepositoryImpl : VideoRepository {
         emptyList()
     }
 
+    override suspend fun getDramas(): List<Series> = try {
+        val results: List<Category> = client.get("$baseUrl/dramas").body()
+        results.flatMap { it.movies }.groupBySeries()
+    } catch (e: Exception) {
+        emptyList()
+    }
+
     private fun List<org.nas.videoplayer.domain.model.Movie>.groupBySeries(): List<Series> = 
         this.groupBy { it.title.cleanTitle(includeYear = false) }
             .map { (title, eps) -> 
