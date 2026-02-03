@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.nas.videoplayer.*
 import org.nas.videoplayer.domain.model.Movie
@@ -29,54 +30,73 @@ import org.nas.videoplayer.domain.model.Series
 import org.nas.videoplayer.domain.repository.VideoRepository
 import org.nas.videoplayer.ui.common.TmdbAsyncImage
 
+// 시즌 정보를 담는 데이터 클래스
+private data class Season(val name: String, val episodes: List<Movie>)
+
 // 데이터 로딩을 위한 데이터 클래스
 private data class SeriesDetailData(
-    val episodes: List<Movie>,
+    val seasons: List<Season>,
     val metadata: TmdbMetadata?,
     val credits: List<TmdbCast>
 )
 
-// 시리즈 상세 정보 (에피소드, 메타데이터, 출연진)를 병렬로 로드하는 함수
+// 에피소드 정렬 로직 공통화
+private fun List<Movie>.sortedByEpisode(): List<Movie> = this.sortedWith(
+    compareBy<Movie> { movie -> movie.title.extractSeason() }
+        .thenBy { movie -> movie.title.extractEpisode()?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 0 }
+)
+
+// 시리즈 상세 정보 (시즌별 에피소드, 메타데이터, 출연진)를 병렬로 로드하는 함수
 private suspend fun loadSeriesData(
     series: Series,
     repository: VideoRepository
 ): SeriesDetailData = coroutineScope {
-    // 1. 에피소드와 메타데이터를 병렬로 로드
-    val episodesDeferred = async {
-        if (series.episodes.isEmpty() && series.fullPath != null) {
+    val metadataDeferred = async { fetchTmdbMetadata(series.title) }
+
+    val seasonsDeferred = async {
+        val path = series.fullPath
+        if (path != null) {
             try {
-                val content = repository.getCategoryList(series.fullPath)
-                val fetchedMovies = content.flatMap { it.movies }.ifEmpty {
-                    content.flatMap { folder ->
-                        repository.getCategoryList("${series.fullPath}/${folder.name}").flatMap { it.movies }
-                    }
+                val content = repository.getCategoryList(path)
+                // 현재 폴더에 직접 영상 파일이 있는지 확인
+                val hasDirectMovies = content.any { it.movies.isNotEmpty() }
+
+                if (hasDirectMovies) {
+                    // 평탄한 구조: 모든 영상을 하나의 시즌으로 묶음
+                    listOf(Season("에피소드", content.flatMap { it.movies }.sortedByEpisode()))
+                } else {
+                    // 계층 구조: 하위 폴더(시즌별)를 각각의 시즌으로 처리
+                    content.map { folder ->
+                        async {
+                            val folderMovies = repository.getCategoryList("$path/${folder.name}").flatMap { it.movies }
+                            if (folderMovies.isNotEmpty()) {
+                                Season(folder.name, folderMovies.sortedByEpisode())
+                            } else null
+                        }
+                    }.awaitAll().filterNotNull().sortedBy { it.name }
                 }
-                fetchedMovies.sortedWith(
-                    compareBy<Movie> { movie -> movie.title.extractSeason() }
-                        .thenBy { movie -> movie.title.extractEpisode()?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 0 }
-                )
             } catch (_: Exception) {
-                // In a real app, you'd want to log this error.
-                emptyList()
+                if (series.episodes.isNotEmpty()) {
+                    listOf(Season("에피소드", series.episodes.sortedByEpisode()))
+                } else emptyList()
             }
+        } else if (series.episodes.isNotEmpty()) {
+            listOf(Season("에피소드", series.episodes.sortedByEpisode()))
         } else {
-            series.episodes
+            emptyList()
         }
     }
 
-    val metadataDeferred = async { fetchTmdbMetadata(series.title) }
-
-    val episodes = episodesDeferred.await()
     val metadata = metadataDeferred.await()
+    val seasons = seasonsDeferred.await()
 
-    // 2. 메타데이터 로드가 완료되면 출연진 정보를 가져옴
     val credits = if (metadata.tmdbId != null) {
         fetchTmdbCredits(metadata.tmdbId, metadata.mediaType)
     } else {
         emptyList()
     }
 
-    SeriesDetailData(episodes, metadata, credits)
+    SeriesDetailData(seasons, metadata, credits)
 }
 
 
@@ -89,10 +109,12 @@ fun SeriesDetailScreen(
 ) {
     var detailData by remember { mutableStateOf<SeriesDetailData?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var selectedSeasonIndex by remember { mutableStateOf(0) }
 
     LaunchedEffect(series) {
         isLoading = true
         detailData = loadSeriesData(series, repository)
+        selectedSeasonIndex = 0 // 시리즈가 바뀌면 첫 번째 시즌으로 초기화
         isLoading = false
     }
 
@@ -117,26 +139,85 @@ fun SeriesDetailScreen(
                 CircularProgressIndicator(color = Color.Red)
             }
         } else if (detailData != null) {
-            val (episodes, metadata, credits) = detailData!!
+            val (seasons, metadata, credits) = detailData!!
 
             SeriesDetailHeader(series = series, metadata = metadata, credits = credits)
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
-            EpisodeList(
-                episodes = episodes,
-                metadata = metadata,
-                onPlay = { movie -> onPlay(movie, episodes) }
-            )
+            if (seasons.isNotEmpty()) {
+                // 시즌이 2개 이상일 때만 셀렉트박스 표시
+                if (seasons.size > 1) {
+                    SeasonSelector(
+                        seasons = seasons,
+                        selectedIndex = selectedSeasonIndex,
+                        onSeasonSelected = { selectedSeasonIndex = it }
+                    )
+                }
+
+                val currentEpisodes = seasons[selectedSeasonIndex].episodes
+                
+                EpisodeList(
+                    episodes = currentEpisodes,
+                    metadata = metadata,
+                    onPlay = { movie -> onPlay(movie, currentEpisodes) }
+                )
+            } else {
+                Text("영상 정보를 찾을 수 없습니다.", color = Color.Gray, modifier = Modifier.padding(16.dp))
+            }
         }
         
         Spacer(Modifier.height(50.dp))
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SeasonSelector(
+    seasons: List<Season>,
+    selectedIndex: Int,
+    onSeasonSelected: (Int) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                value = seasons[selectedIndex].name,
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Red,
+                    unfocusedBorderColor = Color.Gray,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.widthIn(min = 160.dp).menuAnchor()
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                seasons.forEachIndexed { index, season ->
+                    DropdownMenuItem(
+                        text = { Text(season.name) },
+                        onClick = {
+                            onSeasonSelected(index)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SeriesDetailHeader(series: Series, metadata: TmdbMetadata?, credits: List<TmdbCast>) {
-    // 포스터 이미지
     TmdbAsyncImage(
         title = series.title,
         modifier = Modifier.fillMaxWidth().height(280.dp),
@@ -144,7 +225,6 @@ private fun SeriesDetailHeader(series: Series, metadata: TmdbMetadata?, credits:
         isLarge = true
     )
 
-    // 전체 줄거리
     Text(
         metadata?.overview ?: "상세 정보를 불러오는 중입니다...",
         modifier = Modifier.padding(16.dp),
@@ -153,7 +233,6 @@ private fun SeriesDetailHeader(series: Series, metadata: TmdbMetadata?, credits:
         lineHeight = 20.sp
     )
 
-    // 출연진
     if (credits.isNotEmpty()) {
         Text(
             "성우 및 출연진",
@@ -200,13 +279,9 @@ private fun EpisodeList(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
 
-    if (episodes.isEmpty()) {
-        Text("에피소드 정보를 찾을 수 없습니다.", color = Color.Gray, modifier = Modifier.padding(16.dp))
-    } else {
-        Column(Modifier.padding(horizontal = 8.dp)) {
-            episodes.forEach { ep ->
-                EpisodeItem(ep, metadata, onPlay = { onPlay(ep) })
-            }
+    Column(Modifier.padding(horizontal = 8.dp)) {
+        episodes.forEach { ep ->
+            EpisodeItem(ep, metadata, onPlay = { onPlay(ep) })
         }
     }
 }

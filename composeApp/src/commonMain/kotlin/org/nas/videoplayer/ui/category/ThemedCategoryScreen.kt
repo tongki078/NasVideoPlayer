@@ -33,6 +33,7 @@ fun ThemedCategoryScreen(
     val isAniScreen = categoryName == "애니메이션"
     val isMovieScreen = categoryName == "영화"
     val isForeignTvScreen = categoryName == "외국TV"
+    val isKoreanTvScreen = categoryName == "국내TV"
 
     // 현재 선택된 모드에 따른 텍스트 표시
     val selectedCategoryText = when {
@@ -49,6 +50,13 @@ fun ThemedCategoryScreen(
             2 -> "미국 드라마"
             3 -> "기타국가 드라마"
             else -> "다큐"
+        }
+        isKoreanTvScreen -> when(selectedMode) {
+            0 -> "드라마"
+            1 -> "시트콤"
+            2 -> "교양"
+            3 -> "다큐멘터리"
+            else -> "예능"
         }
         else -> categoryName
     }
@@ -85,6 +93,11 @@ fun ThemedCategoryScreen(
                     isForeignTvScreen && selectedMode == 2 -> "외국TV/미국 드라마"
                     isForeignTvScreen && selectedMode == 3 -> "외국TV/기타국가 드라마"
                     isForeignTvScreen && selectedMode == 4 -> "외국TV/다큐"
+                    isKoreanTvScreen && selectedMode == 0 -> "국내TV/드라마"
+                    isKoreanTvScreen && selectedMode == 1 -> "국내TV/시트콤"
+                    isKoreanTvScreen && selectedMode == 2 -> "국내TV/교양"
+                    isKoreanTvScreen && selectedMode == 3 -> "국내TV/다큐멘터리"
+                    isKoreanTvScreen && selectedMode == 4 -> "국내TV/예능"
                     else -> rootPath
                 }
 
@@ -121,7 +134,7 @@ fun ThemedCategoryScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (isAirScreen || isAniScreen || isMovieScreen || isForeignTvScreen) {
+        if (isAirScreen || isAniScreen || isMovieScreen || isForeignTvScreen || isKoreanTvScreen) {
             Box(modifier = Modifier.padding(16.dp)) {
                 ExposedDropdownMenuBox(
                     expanded = expanded,
@@ -168,6 +181,13 @@ fun ThemedCategoryScreen(
                                 DropdownMenuItem(text = { Text("미국 드라마") }, onClick = { onModeChange(2); expanded = false })
                                 DropdownMenuItem(text = { Text("기타국가 드라마") }, onClick = { onModeChange(3); expanded = false })
                                 DropdownMenuItem(text = { Text("다큐") }, onClick = { onModeChange(4); expanded = false })
+                            }
+                             isKoreanTvScreen -> {
+                                DropdownMenuItem(text = { Text("드라마") }, onClick = { onModeChange(0); expanded = false })
+                                DropdownMenuItem(text = { Text("시트콤") }, onClick = { onModeChange(1); expanded = false })
+                                DropdownMenuItem(text = { Text("교양") }, onClick = { onModeChange(2); expanded = false })
+                                DropdownMenuItem(text = { Text("다큐멘터리") }, onClick = { onModeChange(3); expanded = false })
+                                DropdownMenuItem(text = { Text("예능") }, onClick = { onModeChange(4); expanded = false })
                             }
                         }
                     }

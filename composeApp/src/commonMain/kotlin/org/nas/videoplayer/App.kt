@@ -73,6 +73,7 @@ fun App(driver: SqlDriver) {
     var selectedAniMode by rememberSaveable { mutableStateOf(0) }
     var selectedMovieMode by rememberSaveable { mutableStateOf(0) }
     var selectedForeignTvMode by rememberSaveable { mutableStateOf(0) }
+    var selectedKoreanTvMode by rememberSaveable { mutableStateOf(0) }
 
     LaunchedEffect(currentScreen) {
         if (currentScreen == Screen.HOME && homeLatestSeries.isEmpty()) {
@@ -164,7 +165,7 @@ fun App(driver: SqlDriver) {
                                 Screen.ANIMATIONS -> Triple("애니메이션", "애니메이션", selectedAniMode)
                                 Screen.MOVIES -> Triple("영화", "영화", selectedMovieMode)
                                 Screen.FOREIGN_TV -> Triple("외국TV", "외국TV", selectedForeignTvMode)
-                                Screen.KOREAN_TV -> Triple("국내TV", "국내TV", 0)
+                                Screen.KOREAN_TV -> Triple("국내TV", "국내TV", selectedKoreanTvMode)
                                 else -> Triple("", "", 0)
                             }
                             
@@ -173,6 +174,7 @@ fun App(driver: SqlDriver) {
                                 Screen.ANIMATIONS -> { mode -> selectedAniMode = mode }
                                 Screen.MOVIES -> { mode -> selectedMovieMode = mode }
                                 Screen.FOREIGN_TV -> { mode -> selectedForeignTvMode = mode }
+                                Screen.KOREAN_TV -> { mode -> selectedKoreanTvMode = mode }
                                 else -> { _ -> }
                             }
 
