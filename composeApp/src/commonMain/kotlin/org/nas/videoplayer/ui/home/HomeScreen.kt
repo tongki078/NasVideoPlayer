@@ -38,9 +38,10 @@ fun HomeScreen(
     latestMovies: List<Series>,
     animations: List<Series>,
     isLoading: Boolean,
-    lazyListState: LazyListState = rememberLazyListState(), // 스크롤 상태 보존을 위해 추가
+    lazyListState: LazyListState = rememberLazyListState(),
     onSeriesClick: (Series) -> Unit,
-    onPlayClick: (Movie) -> Unit
+    onPlayClick: (Movie) -> Unit,
+    onHistoryClick: (WatchHistory) -> Unit = {} // 추가
 ) {
     if (isLoading) {
         LazyColumn(Modifier.fillMaxSize().background(Color.Black)) {
@@ -57,7 +58,7 @@ fun HomeScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().background(Color.Black),
-            state = lazyListState // 호이스팅된 상태 적용
+            state = lazyListState
         ) {
             if (heroMovie != null) {
                 item {
@@ -77,7 +78,10 @@ fun HomeScreen(
                 item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
                         items(watchHistory) { history ->
-                            MovieCard(title = history.title, onClick = { onSeriesClick(Series(history.title, emptyList())) })
+                            MovieCard(
+                                title = history.title, 
+                                onClick = { onHistoryClick(history) } // history 클릭 핸들러 사용
+                            )
                         }
                     }
                 }

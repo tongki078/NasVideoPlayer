@@ -80,6 +80,21 @@ fun App(driver: SqlDriver) {
     var selectedForeignTvMode by rememberSaveable { mutableStateOf(0) }
     var selectedKoreanTvMode by rememberSaveable { mutableStateOf(0) }
 
+    // 시청 기록 저장 함수 (중복 제거 및 최신화)
+    val saveWatchHistory: (Movie) -> Unit = { movie ->
+        scope.launch {
+            watchHistoryDataSource.insertWatchHistory(
+                id = movie.id,
+                title = movie.title,
+                videoUrl = movie.videoUrl,
+                thumbnailUrl = movie.thumbnailUrl,
+                timestamp = currentTimeMillis(),
+                screenType = "movie",
+                pathStackJson = ""
+            )
+        }
+    }
+
     // 검색을 실행하는 공통 함수
     val performSearch: suspend (String, String) -> Unit = { query, category ->
         if (query.length >= 2) {
@@ -163,7 +178,10 @@ fun App(driver: SqlDriver) {
                                 movie = selectedMovie!!, 
                                 playlist = moviePlaylist,
                                 initialPosition = lastPlaybackPosition,
-                                onPositionUpdate = { lastPlaybackPosition = it },
+                                onPositionUpdate = { 
+                                    lastPlaybackPosition = it
+                                    // 재생 중일 때도 주기적으로 기록을 저장하도록 할 수 있음 (현재는 위치만 업데이트)
+                                },
                                 onBack = { selectedMovie = null }
                             )
                         }
@@ -178,6 +196,7 @@ fun App(driver: SqlDriver) {
                                     selectedMovie = movie
                                     moviePlaylist = playlist
                                     lastPlaybackPosition = pos
+                                    saveWatchHistory(movie) // 재생 시작 시 저장
                                 }
                             )
                         }
@@ -186,7 +205,6 @@ fun App(driver: SqlDriver) {
                                 query = searchQuery, 
                                 onQueryChange = { 
                                     if (searchQuery == it && it.isNotEmpty()) {
-                                        // 동일한 검색어를 다시 클릭했을 때도 검색이 트리거되도록 함
                                         scope.launch { performSearch(it, searchCategory) }
                                     } else {
                                         searchQuery = it 
@@ -200,7 +218,7 @@ fun App(driver: SqlDriver) {
                                 onSaveQuery = { 
                                     scope.launch { 
                                         searchHistoryDataSource.insertQuery(it, currentTimeMillis())
-                                        performSearch(it, searchCategory) // 검색 저장 시 즉시 실행
+                                        performSearch(it, searchCategory)
                                     }
                                 },
                                 onDeleteQuery = { scope.launch { searchHistoryDataSource.deleteQuery(it) } },
@@ -220,6 +238,18 @@ fun App(driver: SqlDriver) {
                                     selectedMovie = movie
                                     moviePlaylist = parentSeries?.episodes ?: listOf(movie)
                                     lastPlaybackPosition = 0L
+                                    saveWatchHistory(movie) // 재생 시작 시 저장
+                                },
+                                onHistoryClick = { history ->
+                                    selectedMovie = Movie(
+                                        id = history.id,
+                                        title = history.title,
+                                        videoUrl = history.videoUrl,
+                                        thumbnailUrl = history.thumbnailUrl
+                                    )
+                                    moviePlaylist = listOf(selectedMovie!!)
+                                    lastPlaybackPosition = 0L 
+                                    saveWatchHistory(selectedMovie!!) // 기록 클릭 시에도 상단으로 올리기 위해 저장 호출
                                 }
                             )
                         }

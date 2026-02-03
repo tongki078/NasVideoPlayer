@@ -26,17 +26,21 @@ actual fun VideoPlayer(
     val currentOnVideoEnded by rememberUpdatedState(onVideoEnded)
     val currentOnPositionUpdate by rememberUpdatedState(onPositionUpdate)
     
+    // AVPlayer는 하나만 유지
     val player = remember { 
         AVPlayer().apply {
             this.automaticallyWaitsToMinimizeStalling = true
         }
     }
     
+    // AVPlayerViewController 인스턴스 관리 최적화
     val playerViewController = remember {
         AVPlayerViewController().apply {
             this.player = player
             this.showsPlaybackControls = true
             this.videoGravity = AVLayerVideoGravityResizeAspect
+            // 아이패드 전체화면 및 컨트롤러 사라짐 방지 옵션
+            this.allowsPictureInPicturePlayback = true
         }
     }
 
@@ -51,6 +55,7 @@ actual fun VideoPlayer(
         }
     }
 
+    // 리소드 해제 및 생명주기 관리
     DisposableEffect(Unit) {
         val observer = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemDidPlayToEndTimeNotification,
@@ -90,7 +95,7 @@ actual fun VideoPlayer(
         
         val headers = NSDictionary.dictionaryWithObject(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            forKey = "User-Agent" as NSCopyingProtocol
+            forKey = "AVURLAssetHTTPHeaderFieldsKey" as NSCopyingProtocol
         )
         
         val assetOptions = NSDictionary.dictionaryWithObject(
@@ -120,6 +125,7 @@ actual fun VideoPlayer(
         var checkCount = 0
         while (isActive && checkCount < 100) {
             if (item.status == AVPlayerItemStatusReadyToPlay) {
+                // 자막 자동 선택
                 val group = asset.mediaSelectionGroupForMediaCharacteristic(AVMediaCharacteristicLegible)
                 if (group != null) {
                     @Suppress("UNCHECKED_CAST")
@@ -146,10 +152,16 @@ actual fun VideoPlayer(
 
     UIKitViewController(
         factory = {
+            // 재생 시 컨트롤러가 보이지 않는 문제 해결을 위해 factory 단계에서 재설정
+            playerViewController.showsPlaybackControls = true
             playerViewController
         },
         modifier = modifier,
         update = {
+            // Compose UI 업데이트 시마다 컨트롤러 가시성 강제 유지
+            if (!playerViewController.showsPlaybackControls) {
+                playerViewController.showsPlaybackControls = true
+            }
         }
     )
 }
