@@ -3,7 +3,18 @@ package org.nas.videoplayer.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Category(val name: String, val movies: List<Movie> = emptyList())
+data class Category(
+    val name: String,
+    val path: String? = null,
+    val movies: List<Movie> = emptyList(),
+    val genreIds: List<Int>? = null,
+    val posterPath: String? = null,
+    val year: String? = null,
+    val overview: String? = null,
+    val rating: String? = null,
+    val seasonCount: Int? = null,
+    val failed: Boolean = false
+)
 
 @Serializable
 data class Movie(
@@ -18,6 +29,9 @@ data class Series(
     val title: String,
     val episodes: List<Movie>,
     val thumbnailUrl: String? = null,
+    val posterPath: String? = null,
+    val overview: String? = null,
+    val year: String? = null,
     val fullPath: String? = null
 )
 
