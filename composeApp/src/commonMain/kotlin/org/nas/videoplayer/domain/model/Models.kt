@@ -25,6 +25,12 @@ data class Movie(
     val duration: String? = null
 )
 
+@Serializable
+data class HomeSection(
+    val title: String,
+    val items: List<Category>
+)
+
 data class Series(
     val title: String,
     val episodes: List<Movie>,

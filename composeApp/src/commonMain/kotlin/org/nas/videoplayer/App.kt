@@ -67,8 +67,8 @@ fun App(driver: SqlDriver) {
     
     var lastPlaybackPosition by rememberSaveable { mutableStateOf(0L) }
 
-    var homeLatestSeries by remember { mutableStateOf<List<Series>>(emptyList()) }
-    var homeAnimations by remember { mutableStateOf<List<Series>>(emptyList()) }
+    // 홈 화면 섹션 데이터 상태
+    var homeSections by remember { mutableStateOf<List<HomeSection>>(emptyList()) }
     var isHomeLoading by remember { mutableStateOf(false) } 
     
     val homeLazyListState = rememberLazyListState()
@@ -80,7 +80,7 @@ fun App(driver: SqlDriver) {
     var selectedForeignTvMode by rememberSaveable { mutableStateOf(0) }
     var selectedKoreanTvMode by rememberSaveable { mutableStateOf(0) }
 
-    // 시청 기록 저장 함수 (중복 제거 및 최신화)
+    // 시청 기록 저장 함수
     val saveWatchHistory: (Movie) -> Unit = { movie ->
         scope.launch(Dispatchers.Default) {
             val isAni = movie.videoUrl.contains("애니메이션") || movie.title.contains("애니메이션")
@@ -96,17 +96,11 @@ fun App(driver: SqlDriver) {
         }
     }
 
-    // 검색을 실행하는 공통 함수
+    // 검색 실행 함수
     val performSearch: suspend (String, String) -> Unit = { query, category ->
         if (query.length >= 2) {
             isSearchLoading = true
             val results = repository.searchVideos(query, category)
-            val isAniSearch = category == "애니메이션"
-            coroutineScope {
-                results.take(9).map { series -> 
-                    async { fetchTmdbMetadata(series.title, if (category != "전체") category.lowercase() else null, isAnimation = isAniSearch) }
-                }.awaitAll()
-            }
             searchResultSeries = results
             isSearchLoading = false
         } else {
@@ -114,32 +108,21 @@ fun App(driver: SqlDriver) {
         }
     }
 
+    // 홈 섹션 로딩
     LaunchedEffect(currentScreen) {
-        if (currentScreen == Screen.HOME && homeLatestSeries.isEmpty()) {
+        if (currentScreen == Screen.HOME && homeSections.isEmpty()) {
             isHomeLoading = true
             try {
-                val latestDeferred = async { repository.getLatestMovies() }
-                val animationsDeferred = async { repository.getAnimations() }
-                val latest = latestDeferred.await()
-                val animations = animationsDeferred.await()
-                coroutineScope {
-                    val latestJobs = latest.take(6).map { series ->
-                        async { fetchTmdbMetadata(series.title) }
-                    }
-                    val aniJobs = animations.take(6).map { series ->
-                        async { fetchTmdbMetadata(series.title, isAnimation = true) }
-                    }
-                    (latestJobs + aniJobs).awaitAll()
-                }
-                homeLatestSeries = latest
-                homeAnimations = animations
+                homeSections = repository.getHomeSections()
+            } catch (e: Exception) {
+                e.printStackTrace()
             } finally {
                 isHomeLoading = false
             }
         }
     }
 
-    // 텍스트 입력 시 자동 검색 (500ms 지연)
+    // 텍스트 입력 시 자동 검색
     LaunchedEffect(searchQuery, searchCategory) {
         if (searchQuery.isNotEmpty()) {
             delay(500)
@@ -203,7 +186,7 @@ fun App(driver: SqlDriver) {
                                     lastPlaybackPosition = pos
                                     saveWatchHistory(movie)
                                 },
-                                onPreviewPlay = { movie -> saveWatchHistory(movie) } // 미리보기 콜백 연결
+                                onPreviewPlay = { movie -> saveWatchHistory(movie) }
                             )
                         }
                         currentScreen == Screen.SEARCH -> {
@@ -232,18 +215,16 @@ fun App(driver: SqlDriver) {
                             )
                         }
                         currentScreen == Screen.HOME -> {
-                            key(watchHistory) { // watchHistory 변경 시 UI 갱신 유도
+                            key(watchHistory) {
                                 HomeScreen(
                                     watchHistory = watchHistory, 
-                                    latestMovies = homeLatestSeries, 
-                                    animations = homeAnimations,
+                                    homeSections = homeSections,
                                     isLoading = isHomeLoading, 
                                     lazyListState = homeLazyListState,
                                     onSeriesClick = { selectedSeries = it }, 
                                     onPlayClick = { movie ->
-                                        val parentSeries = (homeLatestSeries + homeAnimations).find { it.episodes.contains(movie) }
                                         selectedMovie = movie
-                                        moviePlaylist = parentSeries?.episodes ?: listOf(movie)
+                                        moviePlaylist = listOf(movie)
                                         lastPlaybackPosition = 0L
                                         saveWatchHistory(movie)
                                     },

@@ -6,6 +6,7 @@ import io.ktor.http.*
 import org.nas.videoplayer.data.network.NasApiClient
 import org.nas.videoplayer.domain.model.Category
 import org.nas.videoplayer.domain.model.Series
+import org.nas.videoplayer.domain.model.HomeSection
 import org.nas.videoplayer.domain.repository.VideoRepository
 import org.nas.videoplayer.cleanTitle
 import org.nas.videoplayer.extractSeason
@@ -24,9 +25,6 @@ class VideoRepositoryImpl : VideoRepository {
     override suspend fun searchVideos(query: String, category: String): List<Series> = try {
         val url = "$baseUrl/search?q=${query.encodeURLParameter()}&lite=false"
         val results: List<Category> = client.get(url).body()
-        // 검색 결과는 서버에서 이미 path 처리가 되어있을 수 있으나, 안전을 위해 확인 필요
-        // 하지만 서버의 search API는 전체 pool에서 가져오므로 수동 prefix 부여가 까다로움.
-        // 서버의 search API가 올바른 path를 주도록 server.py를 수정하는 것이 더 근본적일 수 있음.
         results.flatMap { it.groupBySeries(it.path) }
     } catch (e: Exception) {
         emptyList()
@@ -71,6 +69,12 @@ class VideoRepositoryImpl : VideoRepository {
     }
 
     override suspend fun getAnimationsAll(): List<Series> = getAnimations()
+
+    override suspend fun getHomeSections(): List<HomeSection> = try {
+        client.get("$baseUrl/home").body()
+    } catch (e: Exception) {
+        emptyList()
+    }
 
     private fun Category.groupBySeries(basePath: String? = null): List<Series> {
         val effectivePath = basePath ?: this.path

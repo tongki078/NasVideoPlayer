@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.sp
 import org.nas.videoplayer.ui.common.TmdbAsyncImage
 import org.nas.videoplayer.domain.model.Series
 import org.nas.videoplayer.domain.model.Movie
+import org.nas.videoplayer.domain.model.Category
+import org.nas.videoplayer.domain.model.HomeSection
 import org.nas.videoplayer.data.WatchHistory
 import org.nas.videoplayer.cleanTitle
 import org.nas.videoplayer.ui.common.shimmerBrush
@@ -35,13 +37,12 @@ import org.nas.videoplayer.ui.common.shimmerBrush
 @Composable
 fun HomeScreen(
     watchHistory: List<WatchHistory>,
-    latestMovies: List<Series>,
-    animations: List<Series>,
+    homeSections: List<HomeSection>, // 서버에서 온 홈 섹션 리스트
     isLoading: Boolean,
     lazyListState: LazyListState = rememberLazyListState(),
     onSeriesClick: (Series) -> Unit,
     onPlayClick: (Movie) -> Unit,
-    onHistoryClick: (WatchHistory) -> Unit = {} // 추가
+    onHistoryClick: (WatchHistory) -> Unit = {}
 ) {
     if (isLoading) {
         LazyColumn(Modifier.fillMaxSize().background(Color.Black)) {
@@ -51,26 +52,20 @@ fun HomeScreen(
             }
         }
     } else {
-        val heroMovie = remember(latestMovies, animations) {
-            latestMovies.firstOrNull()?.episodes?.firstOrNull() 
-                ?: animations.firstOrNull()?.episodes?.firstOrNull()
+        val heroCategory = remember(homeSections) {
+            homeSections.firstOrNull()?.items?.firstOrNull()
         }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             state = lazyListState
         ) {
-            if (heroMovie != null) {
+            if (heroCategory != null) {
                 item {
-                    val isAniHero = animations.any { it.episodes.contains(heroMovie) }
                     HeroSection(
-                        movie = heroMovie,
-                        isAnimation = isAniHero,
-                        onClick = { 
-                            val target = latestMovies.find { it.episodes.contains(heroMovie) } ?: animations.find { it.episodes.contains(heroMovie) }
-                            target?.let { onSeriesClick(it) }
-                        },
-                        onPlay = onPlayClick
+                        category = heroCategory,
+                        onClick = { onSeriesClick(heroCategory.toSeries()) },
+                        onPlay = { onSeriesClick(heroCategory.toSeries()) }
                     )
                 }
             }
@@ -80,39 +75,28 @@ fun HomeScreen(
                 item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
                         items(watchHistory) { history ->
-                            // 기존 기록 중에서도 애니메이션 여부를 제목 대조를 통해 다시 확인
-                            val cleanedHistoryTitle = history.title.cleanTitle(includeYear = false)
-                            val isAniHistory = history.screenType == "animation" || 
-                                               history.videoUrl.contains("애니메이션") ||
-                                               animations.any { it.title.cleanTitle(includeYear = false).equals(cleanedHistoryTitle, ignoreCase = true) }
-
                             MovieCard(
-                                title = history.title, 
-                                isAnimation = isAniHistory,
-                                onClick = { onHistoryClick(history) } // history 클릭 핸들러 사용
+                                title = history.title,
+                                posterPath = null, // 시청 기록에는 posterPath가 없음
+                                isAnimation = history.screenType == "animation",
+                                onClick = { onHistoryClick(history) }
                             )
                         }
                     }
                 }
             }
 
-            if (latestMovies.isNotEmpty()) {
-                item { SectionTitle("최신 영화") }
+            homeSections.forEach { section ->
+                item { SectionTitle(section.title) }
                 item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                        items(latestMovies) { series ->
-                            MovieCard(title = series.title, typeHint = "movie", onClick = { onSeriesClick(series) })
-                        }
-                    }
-                }
-            }
-
-            if (animations.isNotEmpty()) {
-                item { SectionTitle("라프텔 애니메이션") }
-                item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                        items(animations) { series ->
-                            MovieCard(title = series.title, typeHint = "tv", isAnimation = true, onClick = { onSeriesClick(series) })
+                        items(section.items) { item ->
+                            MovieCard(
+                                title = item.name, 
+                                posterPath = item.posterPath,
+                                isAnimation = item.path?.contains("애니메이션") ?: false,
+                                onClick = { onSeriesClick(item.toSeries()) }
+                            )
                         }
                     }
                 }
@@ -123,8 +107,17 @@ fun HomeScreen(
     }
 }
 
+private fun Category.toSeries() = Series(
+    title = this.name,
+    episodes = this.movies,
+    posterPath = this.posterPath,
+    overview = this.overview,
+    year = this.year,
+    fullPath = this.path
+)
+
 @Composable
-private fun HeroSection(movie: Movie, isAnimation: Boolean = false, onClick: () -> Unit, onPlay: (Movie) -> Unit) {
+private fun HeroSection(category: Category, onClick: () -> Unit, onPlay: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -133,66 +126,49 @@ private fun HeroSection(movie: Movie, isAnimation: Boolean = false, onClick: () 
             .background(Color.Black)
     ) {
         TmdbAsyncImage(
-            title = movie.title,
+            title = category.name,
+            posterPath = category.posterPath,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
-            isLarge = true,
-            isAnimation = isAnimation
+            isLarge = true
         )
         
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Black.copy(alpha = 0.4f),
-                            Color.Transparent,
-                            Color.Black.copy(alpha = 0.6f),
-                            Color.Black
-                        )
-                    )
-                )
-        )
+        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(colors = listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent, Color.Black.copy(alpha = 0.6f), Color.Black))))
 
         Card(
-            modifier = Modifier
-                .width(280.dp)
-                .height(400.dp)
-                .align(Alignment.TopCenter)
-                .padding(top = 40.dp),
+            modifier = Modifier.width(280.dp).height(400.dp).align(Alignment.TopCenter).padding(top = 40.dp),
             shape = RoundedCornerShape(8.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
         ) {
-            TmdbAsyncImage(title = movie.title, modifier = Modifier.fillMaxSize(), isLarge = true, isAnimation = isAnimation)
+            TmdbAsyncImage(
+                title = category.name, 
+                posterPath = category.posterPath,
+                modifier = Modifier.fillMaxSize(), 
+                isLarge = true
+            )
         }
 
         Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = movie.title.cleanTitle(),
+                text = category.name.cleanTitle(),
                 color = Color.White,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    shadow = Shadow(color = Color.Black, blurRadius = 8f)
-                ),
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold, shadow = Shadow(color = Color.Black, blurRadius = 8f)),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 24.dp)
             )
             Spacer(Modifier.height(20.dp))
             Button(
-                onClick = { onPlay(movie) },
+                onClick = { onPlay() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier.width(120.dp).height(45.dp)
             ) {
                 Icon(Icons.Default.PlayArrow, null, tint = Color.Black)
                 Spacer(Modifier.width(8.dp))
-                Text("재생", color = Color.Black, fontWeight = FontWeight.Bold)
+                Text("정보", color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -200,50 +176,22 @@ private fun HeroSection(movie: Movie, isAnimation: Boolean = false, onClick: () 
 
 @Composable
 private fun SectionTitle(title: String) {
-    Text(
-        text = title,
-        modifier = Modifier.padding(16.dp),
-        color = Color.White,
-        fontWeight = FontWeight.Bold,
-        fontSize = 20.sp
-    )
+    Text(text = title, modifier = Modifier.padding(16.dp), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
 }
 
 @Composable
-private fun MovieCard(title: String, typeHint: String? = null, isAnimation: Boolean = false, onClick: () -> Unit) {
-    Card(
-        Modifier
-            .size(130.dp, 200.dp)
-            .padding(end = 12.dp)
-            .clickable(onClick = onClick)
-    ) {
-        TmdbAsyncImage(title, Modifier.fillMaxSize(), typeHint = typeHint, isAnimation = isAnimation)
+private fun MovieCard(title: String, posterPath: String?, isAnimation: Boolean, onClick: () -> Unit) {
+    Card(Modifier.size(130.dp, 200.dp).padding(end = 12.dp).clickable(onClick = onClick)) {
+        TmdbAsyncImage(title = title, posterPath = posterPath, modifier = Modifier.fillMaxSize(), isAnimation = isAnimation)
     }
 }
 
-// ==========================================================
-// 스켈레톤 UI 컴포넌트
-// ==========================================================
-
 @Composable
 private fun HeroSectionSkeleton() {
-    Box(
-        modifier = Modifier.fillMaxWidth().height(550.dp).background(Color.Black),
-        contentAlignment = Alignment.TopCenter
-    ) {
+    Box(modifier = Modifier.fillMaxWidth().height(550.dp).background(Color.Black), contentAlignment = Alignment.TopCenter) {
         Box(modifier = Modifier.fillMaxSize().background(shimmerBrush()))
-        Box(
-            modifier = Modifier
-                .padding(top = 40.dp)
-                .width(280.dp)
-                .height(400.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(shimmerBrush())
-        )
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        Box(modifier = Modifier.padding(top = 40.dp).width(280.dp).height(400.dp).clip(RoundedCornerShape(8.dp)).background(shimmerBrush()))
+        Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.width(200.dp).height(30.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
             Spacer(Modifier.height(20.dp))
             Box(Modifier.width(120.dp).height(45.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
@@ -258,13 +206,7 @@ private fun SectionSkeleton() {
         Spacer(Modifier.height(16.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
             items(5) {
-                Box(
-                    modifier = Modifier
-                        .size(130.dp, 200.dp)
-                        .padding(end = 12.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(shimmerBrush())
-                )
+                Box(modifier = Modifier.size(130.dp, 200.dp).padding(end = 12.dp).clip(RoundedCornerShape(8.dp)).background(shimmerBrush()))
             }
         }
     }

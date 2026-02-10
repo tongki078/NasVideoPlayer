@@ -25,27 +25,26 @@ fun TmdbAsyncImage(
     contentScale: ContentScale = ContentScale.Crop, 
     typeHint: String? = null, 
     isLarge: Boolean = false,
-    isAnimation: Boolean = false
+    isAnimation: Boolean = false,
+    posterPath: String? = null // 추가: 서버에서 이미 찾은 포스터 경로
 ) {
     val cacheKey = if (isAnimation) "ani_$title" else title
     var metadata by remember(cacheKey) { mutableStateOf(tmdbCache[cacheKey]) }
-    var isError by remember(cacheKey) { mutableStateOf(false) }
-    var isLoading by remember(cacheKey) { mutableStateOf(metadata == null) }
+    var isError by remember(cacheKey, posterPath) { mutableStateOf(false) }
+    var isLoading by remember(cacheKey, posterPath) { mutableStateOf(metadata == null && posterPath == null) }
     
-    val imageUrl = metadata?.posterUrl?.replace(
-        TMDB_POSTER_SIZE_MEDIUM, 
-        if (isLarge) TMDB_POSTER_SIZE_LARGE else TMDB_POSTER_SIZE_SMALL
-    )
+    // 서버에서 준 posterPath가 있으면 우선 사용, 없으면 캐시된 메타데이터 사용
+    val finalPosterPath = posterPath ?: metadata?.posterUrl?.substringAfterLast("/")
+    val imageUrl = if (finalPosterPath != null) {
+        val size = if (isLarge) TMDB_POSTER_SIZE_LARGE else TMDB_POSTER_SIZE_MEDIUM
+        "https://image.tmdb.org/t/p/$size/$finalPosterPath"
+    } else null
 
-    LaunchedEffect(cacheKey) {
-        if (metadata == null) {
+    LaunchedEffect(cacheKey, posterPath) {
+        if (posterPath == null && metadata == null) {
             isLoading = true
             metadata = fetchTmdbMetadata(title, typeHint, isAnimation = isAnimation)
-            isError = metadata?.posterUrl == null
             isLoading = false
-        } else { 
-            isError = metadata?.posterUrl == null
-            isLoading = false 
         }
     }
     
@@ -53,7 +52,7 @@ fun TmdbAsyncImage(
         modifier = modifier
             .background(shimmerBrush(showShimmer = isLoading && !isError))
     ) {
-        if (imageUrl != null && !isLoading) {
+        if (imageUrl != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalPlatformContext.current)
                     .data(imageUrl)
@@ -62,7 +61,7 @@ fun TmdbAsyncImage(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = contentScale,
-                onSuccess = { isLoading = false },
+                onSuccess = { isLoading = false; isError = false },
                 onError = { isError = true; isLoading = false }
             )
         }
