@@ -83,21 +83,17 @@ fun SeriesDetailScreen(
         containerColor = Color.Black,
         modifier = Modifier.fillMaxSize()
     ) { pv ->
-        if (state.isLoading) {
-            Column(modifier = Modifier.fillMaxSize().padding(pv)) { HeaderSkeleton() }
-        } else {
-            Box(modifier = Modifier.fillMaxSize()) {
-                DetailContent(
-                    series = series, 
-                    state = state, 
-                    initialPosition = currentPlaybackTime,
-                    onPositionUpdate = { currentPlaybackTime = it; onPositionUpdate(it) },
-                    onSeasonSelected = { index -> state = state.copy(selectedSeasonIndex = index) },
-                    onPlay = onPlay, 
-                    onPreviewPlay = onPreviewPlay
-                )
-                DetailFloatingTopBar(series.title, onBack)
-            }
+        Box(modifier = Modifier.fillMaxSize().padding(pv)) {
+            DetailContent(
+                series = series, 
+                state = state, 
+                initialPosition = currentPlaybackTime,
+                onPositionUpdate = { currentPlaybackTime = it; onPositionUpdate(it) },
+                onSeasonSelected = { index -> state = state.copy(selectedSeasonIndex = index) },
+                onPlay = onPlay, 
+                onPreviewPlay = onPreviewPlay
+            )
+            DetailFloatingTopBar(series.title, onBack)
         }
     }
 }
@@ -150,6 +146,12 @@ private fun DetailContent(
         )
         
         Spacer(Modifier.height(16.dp))
+
+        state.detail?.actors?.let { actors ->
+            if (actors.isNotEmpty()) {
+                CastList(actors = actors)
+            }
+        }
         
         if (state.seasons.isNotEmpty()) {
             if (state.seasons.size > 1) {
@@ -166,12 +168,6 @@ private fun DetailContent(
         } else {
             Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { 
                 Text("시청 가능한 회차가 없습니다.", color = Color.Gray) 
-            }
-        }
-        
-        state.detail?.actors?.let { actors ->
-            if (actors.isNotEmpty()) {
-                CastList(actors = actors)
             }
         }
         
@@ -323,19 +319,6 @@ private fun CastList(actors: List<Actor>) {
                 Spacer(Modifier.height(4.dp))
                 Text(actor.name, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-        }
-    }
-}
-
-@Composable
-private fun HeaderSkeleton() {
-    Column {
-        Box(modifier = Modifier.fillMaxWidth().height(320.dp).background(shimmerBrush()))
-        Spacer(Modifier.height(16.dp))
-        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-            Box(Modifier.fillMaxWidth().height(20.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-            Box(Modifier.fillMaxWidth(0.7f).height(20.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
         }
     }
 }
