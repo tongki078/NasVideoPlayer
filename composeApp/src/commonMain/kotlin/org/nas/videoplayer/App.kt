@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.crossfade
@@ -136,7 +137,8 @@ fun App(driver: SqlDriver) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(
                 topBar = {
-                    if (selectedMovie == null && currentScreen != Screen.SEARCH) {
+                    // 상세 페이지나 검색 중일 때는 상단 네비게이션 숨김
+                    if (selectedMovie == null && currentScreen != Screen.SEARCH && selectedSeries == null) {
                         NetflixTopBar(currentScreen) { 
                             currentScreen = it
                             selectedSeries = null 
@@ -160,7 +162,7 @@ fun App(driver: SqlDriver) {
                     }
                 }
             ) { pv ->
-                Box(Modifier.padding(pv).fillMaxSize()) {
+                Box(Modifier.padding(if (selectedSeries != null || selectedMovie != null) PaddingValues(0.dp) else pv).fillMaxSize()) {
                     when {
                         selectedMovie != null -> {
                             VideoPlayerScreen(
@@ -244,12 +246,12 @@ fun App(driver: SqlDriver) {
                         }
                         else -> {
                             val categoryInfo = when (currentScreen) {
-                                Screen.ON_AIR -> Triple("방송중", "방송중", selectedAirMode)
-                                Screen.ANIMATIONS -> Triple("애니메이션", "애니메이션", selectedAniMode)
-                                Screen.MOVIES -> Triple("영화", "영화", selectedMovieMode)
-                                Screen.FOREIGN_TV -> Triple("외국TV", "외국TV", selectedForeignTvMode)
-                                Screen.KOREAN_TV -> Triple("국내TV", "국내TV", selectedKoreanTvMode)
-                                else -> Triple("", "", 0)
+                                Screen.ON_AIR -> Pair("방송중", selectedAirMode)
+                                Screen.ANIMATIONS -> Pair("애니메이션", selectedAniMode)
+                                Screen.MOVIES -> Pair("영화", selectedMovieMode)
+                                Screen.FOREIGN_TV -> Pair("외국TV", selectedForeignTvMode)
+                                Screen.KOREAN_TV -> Pair("국내TV", selectedKoreanTvMode)
+                                else -> Pair("", 0)
                             }
                             
                             val onModeChange: (Int) -> Unit = when (currentScreen) {
@@ -264,9 +266,8 @@ fun App(driver: SqlDriver) {
                             if (categoryInfo.first.isNotEmpty()) {
                                 ThemedCategoryScreen(
                                     categoryName = categoryInfo.first,
-                                    rootPath = categoryInfo.second,
                                     repository = repository,
-                                    selectedMode = categoryInfo.third,
+                                    selectedMode = categoryInfo.second,
                                     onModeChange = onModeChange,
                                     lazyListState = themedCategoryLazyListState,
                                     onSeriesClick = { selectedSeries = it }

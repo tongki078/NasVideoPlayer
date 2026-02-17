@@ -18,6 +18,7 @@ import android.util.Log
 import android.view.View
 import androidx.compose.foundation.layout.fillMaxSize
 import kotlinx.coroutines.delay
+import org.nas.videoplayer.data.network.NasApiClient
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -35,6 +36,11 @@ actual fun VideoPlayer(
     val currentOnPositionUpdate by rememberUpdatedState(onPositionUpdate)
     val currentOnVisibilityChanged by rememberUpdatedState(onControllerVisibilityChanged)
 
+    // URL 절대 경로 변환
+    val absoluteUrl = remember(url) {
+        if (url.startsWith("/")) "${NasApiClient.BASE_URL}$url" else url
+    }
+
     val exoPlayer = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
@@ -46,7 +52,7 @@ actual fun VideoPlayer(
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.e("VideoPlayer", "재생 에러: ${error.errorCodeName} - ${error.message}")
+                        Log.e("VideoPlayer", "재생 에러: ${error.errorCodeName} - ${error.message} - URL: $absoluteUrl")
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -67,9 +73,9 @@ actual fun VideoPlayer(
         }
     }
 
-    LaunchedEffect(url) {
-        if (url.isBlank()) return@LaunchedEffect
-        val mediaItem = MediaItem.Builder().setUri(url).build()
+    LaunchedEffect(absoluteUrl) {
+        if (absoluteUrl.isBlank()) return@LaunchedEffect
+        val mediaItem = MediaItem.Builder().setUri(absoluteUrl).build()
         exoPlayer.setMediaItem(mediaItem)
         if (initialPosition > 0) exoPlayer.seekTo(initialPosition)
         exoPlayer.prepare()
@@ -89,7 +95,6 @@ actual fun VideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
-                    // 최신 Media3 가시성 리스너 설정
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
                         currentOnVisibilityChanged?.invoke(visibility == View.VISIBLE)
                     })

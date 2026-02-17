@@ -15,114 +15,51 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import org.nas.videoplayer.domain.model.Series
-import org.nas.videoplayer.domain.model.Movie
 import org.nas.videoplayer.domain.model.Category
+import org.nas.videoplayer.domain.model.HomeSection
 import org.nas.videoplayer.domain.repository.VideoRepository
 import org.nas.videoplayer.ui.common.MovieRow
-import org.nas.videoplayer.*
 import org.nas.videoplayer.ui.common.shimmerBrush
+import org.nas.videoplayer.cleanTitle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThemedCategoryScreen(
     categoryName: String,
-    rootPath: String,
     repository: VideoRepository,
     selectedMode: Int,
     onModeChange: (Int) -> Unit,
-    lazyListState: LazyListState = rememberLazyListState(), // 스크롤 상태 보존
+    lazyListState: LazyListState = rememberLazyListState(),
     onSeriesClick: (Series) -> Unit
 ) {
-    val isAirScreen = categoryName == "방송중"
-    val isAniScreen = categoryName == "애니메이션"
-    val isMovieScreen = categoryName == "영화"
-    val isForeignTvScreen = categoryName == "외국TV"
-    val isKoreanTvScreen = categoryName == "국내TV"
+    // UI의 탭 이름(애니, 외국 TV 등)을 서버 코드의 categoryCode와 정확히 매칭
+    val categoryCode = when (categoryName) {
+        "방송중" -> "air"
+        "애니", "애니메이션" -> "animations_all"
+        "영화" -> "movies"
+        "외국 TV", "외국TV" -> "foreigntv"
+        "국내 TV", "국내TV" -> "koreantv"
+        else -> "movies"
+    }
 
-    val selectedCategoryText = when {
-        isAirScreen -> if (selectedMode == 0) "라프텔 애니메이션" else "드라마"
-        isAniScreen -> if (selectedMode == 0) "라프텔" else "시리즈"
-        isMovieScreen -> when(selectedMode) { 0 -> "최신"; 1 -> "UHD"; else -> "제목" }
-        isForeignTvScreen -> when(selectedMode) { 0 -> "중국 드라마"; 1 -> "일본 드라마"; 2 -> "미국 드라마"; 3 -> "기타국가 드라마"; else -> "다큐" }
-        isKoreanTvScreen -> when(selectedMode) { 0 -> "드라마"; 1 -> "시트콤"; 2 -> "교양"; 3 -> "다큐멘터리"; else -> "예능" }
-        else -> categoryName
+    val selectedKeyword = when (categoryName) {
+        "방송중" -> if (selectedMode == 0) "라프텔 애니메이션" else "드라마"
+        "애니", "애니메이션" -> if (selectedMode == 0) "라프텔" else "시리즈"
+        "영화" -> when(selectedMode) { 0 -> "최신"; 1 -> "UHD"; else -> "제목" }
+        "외국 TV", "외국TV" -> when(selectedMode) { 0 -> "중국 드라마"; 1 -> "일본 드라마"; 2 -> "미국 드라마"; 3 -> "기타"; else -> "다큐" }
+        "국내 TV", "국내TV" -> when(selectedMode) { 0 -> "드라마"; 1 -> "시트콤"; 2 -> "교양"; 3 -> "다큐"; else -> "예능" }
+        else -> null
     }
     
     var expanded by remember { mutableStateOf(false) }
-    var themedSections by remember(selectedMode, categoryName) { mutableStateOf<List<Pair<String, List<Series>>>>(emptyList()) }
+    var themedSections by remember(selectedMode, categoryName) { mutableStateOf<List<HomeSection>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(selectedMode, categoryName) {
         isLoading = true
         try {
-            val sections = if (isAirScreen) {
-                val allSeries = if (selectedMode == 0) repository.getAnimations() else repository.getDramas()
-                if (allSeries.isNotEmpty()) {
-                    val shuffled = allSeries.shuffled()
-                    val chunkSize = (shuffled.size / 3).coerceAtLeast(1)
-                    listOf(
-                        getRandomThemeName("인기", 0, false, selectedCategoryText) to shuffled.take(chunkSize),
-                        getRandomThemeName("최근 업데이트", 1, false, selectedCategoryText) to shuffled.drop(chunkSize).take(chunkSize),
-                        getRandomThemeName("오늘의 추천", 2, false, selectedCategoryText) to shuffled.drop(chunkSize * 2)
-                    ).filter { it.second.isNotEmpty() }
-                } else emptyList()
-            } else {
-                val currentRootPath = when {
-                    isAniScreen && selectedMode == 0 -> "애니메이션/라프텔"
-                    isAniScreen && selectedMode == 1 -> "애니메이션/시리즈"
-                    isMovieScreen && selectedMode == 0 -> "영화/최신"
-                    isMovieScreen && selectedMode == 1 -> "영화/UHD"
-                    isMovieScreen && selectedMode == 2 -> "영화/제목"
-                    isForeignTvScreen && selectedMode == 0 -> "외국TV/중국 드라마"
-                    isForeignTvScreen && selectedMode == 1 -> "외국TV/일본 드라마"
-                    isForeignTvScreen && selectedMode == 2 -> "외국TV/미국 드라마"
-                    isForeignTvScreen && selectedMode == 3 -> "외국TV/기타국가 드라마"
-                    isForeignTvScreen && selectedMode == 4 -> "외국TV/다큐"
-                    isKoreanTvScreen && selectedMode == 0 -> "국내TV/드라마"
-                    isKoreanTvScreen && selectedMode == 1 -> "국내TV/시트콤"
-                    isKoreanTvScreen && selectedMode == 2 -> "국내TV/교양"
-                    isKoreanTvScreen && selectedMode == 3 -> "국내TV/다큐멘터리"
-                    isKoreanTvScreen && selectedMode == 4 -> "국내TV/예능"
-                    else -> rootPath
-                }
-
-                val themeFolders = repository.getCategoryList(currentRootPath)
-                coroutineScope {
-                    themeFolders.take(4).mapIndexed { index, folder ->
-                        async {
-                            val folderPath = "$currentRootPath/${folder.name}"
-                            val content = repository.getCategoryList(folderPath)
-                            val hasDirectMovies = content.any { it.movies.isNotEmpty() }
-                            val seriesList = if (hasDirectMovies) {
-                                content.flatMap { it.movies }.groupBySeries(folderPath)
-                            } else {
-                                content.map { subFolder ->
-                                    Series(
-                                        title = subFolder.name.cleanTitle(includeYear = false),
-                                        episodes = emptyList(),
-                                        fullPath = "$folderPath/${subFolder.name}"
-                                    )
-                                }.filter { it.title.length > 1 }
-                            }
-                            if (seriesList.isNotEmpty()) {
-                                getRandomThemeName(folder.name, index, currentRootPath.contains("영화"), categoryName) to seriesList
-                            } else null
-                        }
-                    }.awaitAll().filterNotNull()
-                }
-            }
-
-            coroutineScope {
-                sections.flatMap { it.second.take(5) }.map { series ->
-                    async { fetchTmdbMetadata(series.title) }
-                }.awaitAll()
-            }
-
-            themedSections = sections
+            themedSections = repository.getCategorySections(categoryCode, selectedKeyword)
         } catch (e: Exception) {
             themedSections = emptyList()
         } finally {
@@ -131,40 +68,38 @@ fun ThemedCategoryScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (isAirScreen || isAniScreen || isMovieScreen || isForeignTvScreen || isKoreanTvScreen) {
-            ExposedCategoryDropdown(
-                expanded = expanded,
-                onExpandedChange = { expanded = it },
-                selectedText = selectedCategoryText
-            ) {
-                when {
-                    isAirScreen -> {
-                        DropdownMenuItem(text = { Text("라프텔 애니메이션") }, onClick = { onModeChange(0); expanded = false })
-                        DropdownMenuItem(text = { Text("드라마") }, onClick = { onModeChange(1); expanded = false })
-                    }
-                    isAniScreen -> {
-                        DropdownMenuItem(text = { Text("라프텔") }, onClick = { onModeChange(0); expanded = false })
-                        DropdownMenuItem(text = { Text("시리즈") }, onClick = { onModeChange(1); expanded = false })
-                    }
-                    isMovieScreen -> {
-                        DropdownMenuItem(text = { Text("최신") }, onClick = { onModeChange(0); expanded = false })
-                        DropdownMenuItem(text = { Text("UHD") }, onClick = { onModeChange(1); expanded = false })
-                        DropdownMenuItem(text = { Text("제목") }, onClick = { onModeChange(2); expanded = false })
-                    }
-                    isForeignTvScreen -> {
-                        DropdownMenuItem(text = { Text("중국 드라마") }, onClick = { onModeChange(0); expanded = false })
-                        DropdownMenuItem(text = { Text("일본 드라마") }, onClick = { onModeChange(1); expanded = false })
-                        DropdownMenuItem(text = { Text("미국 드라마") }, onClick = { onModeChange(2); expanded = false })
-                        DropdownMenuItem(text = { Text("기타국가 드라마") }, onClick = { onModeChange(3); expanded = false })
-                        DropdownMenuItem(text = { Text("다큐") }, onClick = { onModeChange(4); expanded = false })
-                    }
-                    isKoreanTvScreen -> {
-                        DropdownMenuItem(text = { Text("드라마") }, onClick = { onModeChange(0); expanded = false })
-                        DropdownMenuItem(text = { Text("시트콤") }, onClick = { onModeChange(1); expanded = false })
-                        DropdownMenuItem(text = { Text("교양") }, onClick = { onModeChange(2); expanded = false })
-                        DropdownMenuItem(text = { Text("다큐멘터리") }, onClick = { onModeChange(3); expanded = false })
-                        DropdownMenuItem(text = { Text("예능") }, onClick = { onModeChange(4); expanded = false })
-                    }
+        ExposedCategoryDropdown(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            selectedText = selectedKeyword ?: categoryName
+        ) {
+            when (categoryName) {
+                "방송중" -> {
+                    DropdownMenuItem(text = { Text("라프텔 애니메이션") }, onClick = { onModeChange(0); expanded = false })
+                    DropdownMenuItem(text = { Text("드라마") }, onClick = { onModeChange(1); expanded = false })
+                }
+                "애니", "애니메이션" -> {
+                    DropdownMenuItem(text = { Text("라프텔") }, onClick = { onModeChange(0); expanded = false })
+                    DropdownMenuItem(text = { Text("시리즈") }, onClick = { onModeChange(1); expanded = false })
+                }
+                "영화" -> {
+                    DropdownMenuItem(text = { Text("최신") }, onClick = { onModeChange(0); expanded = false })
+                    DropdownMenuItem(text = { Text("UHD") }, onClick = { onModeChange(1); expanded = false })
+                    DropdownMenuItem(text = { Text("제목") }, onClick = { onModeChange(2); expanded = false })
+                }
+                "외국 TV", "외국TV" -> {
+                    DropdownMenuItem(text = { Text("중국 드라마") }, onClick = { onModeChange(0); expanded = false })
+                    DropdownMenuItem(text = { Text("일본 드라마") }, onClick = { onModeChange(1); expanded = false })
+                    DropdownMenuItem(text = { Text("미국 드라마") }, onClick = { onModeChange(2); expanded = false })
+                    DropdownMenuItem(text = { Text("기타") }, onClick = { onModeChange(3); expanded = false })
+                    DropdownMenuItem(text = { Text("다큐") }, onClick = { onModeChange(4); expanded = false })
+                }
+                "국내 TV", "국내TV" -> {
+                    DropdownMenuItem(text = { Text("드라마") }, onClick = { onModeChange(0); expanded = false })
+                    DropdownMenuItem(text = { Text("시트콤") }, onClick = { onModeChange(1); expanded = false })
+                    DropdownMenuItem(text = { Text("교양") }, onClick = { onModeChange(2); expanded = false })
+                    DropdownMenuItem(text = { Text("다큐멘터리") }, onClick = { onModeChange(3); expanded = false })
+                    DropdownMenuItem(text = { Text("예능") }, onClick = { onModeChange(4); expanded = false })
                 }
             }
         }
@@ -173,7 +108,7 @@ fun ThemedCategoryScreen(
             LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
                 items(3) { CategorySectionSkeleton() }
             }
-        } else if (themedSections.isEmpty()) {
+        } else if (themedSections.isEmpty() || themedSections.all { it.items.isEmpty() }) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Text("불러올 영상이 없습니다.", color = Color.Gray)
             }
@@ -183,16 +118,44 @@ fun ThemedCategoryScreen(
                 state = lazyListState,
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                items(themedSections) { (title, seriesList) ->
-                    MovieRow(
-                        title = title,
-                        seriesList = seriesList,
-                        onSeriesClick = onSeriesClick
-                    )
+                items(themedSections) { section ->
+                    if (section.items.isNotEmpty()) {
+                        MovieRow(
+                            title = section.title,
+                            seriesList = section.items.flatMap { it.toSeriesList() },
+                            onSeriesClick = onSeriesClick
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+private fun Category.toSeriesList(): List<Series> {
+    if (this.movies.isEmpty()) {
+        return listOf(Series(
+            title = this.name.cleanTitle(includeYear = false),
+            episodes = emptyList(),
+            posterPath = this.posterPath,
+            overview = this.overview,
+            year = this.year,
+            fullPath = this.path,
+            rating = this.rating
+        ))
+    }
+    return this.movies.groupBy { it.title.cleanTitle(includeYear = false) }
+        .map { (title, eps) -> 
+            Series(
+                title = title, 
+                episodes = eps,
+                posterPath = this.posterPath,
+                overview = this.overview,
+                year = this.year,
+                fullPath = this.path,
+                rating = this.rating
+            ) 
+        }
 }
 
 @Composable
@@ -252,17 +215,3 @@ private fun CategorySectionSkeleton() {
         }
     }
 }
-
-private fun List<Movie>.groupBySeries(basePath: String? = null): List<Series> = 
-    this.groupBy { it.title.cleanTitle(includeYear = false) }
-        .map { (title, eps) -> 
-            Series(
-                title = title, 
-                episodes = eps.sortedWith(
-                    compareBy<Movie> { it.title.extractSeason() }
-                        .thenBy { it.title.extractEpisode()?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 0 }
-                ),
-                fullPath = basePath
-            ) 
-        }
-        .sortedBy { it.title }

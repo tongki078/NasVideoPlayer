@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nas.videoplayer.ui.common.TmdbAsyncImage
@@ -76,7 +77,7 @@ fun HomeScreen(
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
                         items(watchHistory) { history ->
                             MovieCard(
-                                title = history.title,
+                                title = history.title.cleanTitle(),
                                 posterPath = null, // 시청 기록에는 posterPath가 없음
                                 isAnimation = history.screenType == "animation",
                                 onClick = { onHistoryClick(history) }
@@ -92,7 +93,7 @@ fun HomeScreen(
                     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
                         items(section.items) { item ->
                             MovieCard(
-                                title = item.name, 
+                                title = item.name.cleanTitle(includeYear = false), 
                                 posterPath = item.posterPath,
                                 isAnimation = item.path?.contains("애니메이션") ?: false,
                                 onClick = { onSeriesClick(item.toSeries()) }
@@ -108,12 +109,17 @@ fun HomeScreen(
 }
 
 private fun Category.toSeries() = Series(
-    title = this.name,
+    title = this.name.cleanTitle(includeYear = false),
     episodes = this.movies,
     posterPath = this.posterPath,
     overview = this.overview,
     year = this.year,
-    fullPath = this.path
+    fullPath = this.path,
+    genreNames = this.genreNames,
+    director = this.director,
+    actors = this.actors,
+    rating = this.rating,
+    tmdbId = this.tmdbId
 )
 
 @Composable
@@ -153,7 +159,7 @@ private fun HeroSection(category: Category, onClick: () -> Unit, onPlay: () -> U
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = category.name.cleanTitle(),
+                text = category.name.cleanTitle(includeYear = false),
                 color = Color.White,
                 style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold, shadow = Shadow(color = Color.Black, blurRadius = 8f)),
                 textAlign = TextAlign.Center,

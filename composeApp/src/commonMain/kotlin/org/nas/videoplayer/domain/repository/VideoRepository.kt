@@ -6,10 +6,12 @@ import org.nas.videoplayer.domain.model.HomeSection
 
 interface VideoRepository {
     suspend fun getCategoryList(path: String): List<Category>
+    suspend fun getCategorySections(category: String, keyword: String? = null): List<HomeSection>
+    suspend fun getSeriesDetail(path: String): Category?
     suspend fun searchVideos(query: String, category: String = "전체"): List<Series>
     suspend fun getLatestMovies(): List<Series>
     suspend fun getAnimations(): List<Series>
     suspend fun getDramas(): List<Series>
     suspend fun getAnimationsAll(): List<Series>
-    suspend fun getHomeSections(): List<HomeSection> // 홈 추천 섹션 추가
+    suspend fun getHomeSections(): List<HomeSection>
 }
