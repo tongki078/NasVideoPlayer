@@ -4,6 +4,7 @@ import coil3.PlatformContext
 
 interface Platform {
     val name: String
+    val isIos: Boolean get() = name.contains("iOS")
 }
 
 expect fun getPlatform(): Platform

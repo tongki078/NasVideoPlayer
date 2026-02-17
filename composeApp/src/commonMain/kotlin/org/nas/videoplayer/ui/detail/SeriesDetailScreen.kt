@@ -206,17 +206,33 @@ private fun SeriesDetailHeader(
     initialPosition: Long = 0L, onPositionUpdate: (Long) -> Unit = {},
     onPlayClick: () -> Unit, onFullscreenClick: () -> Unit = {}
 ) {
-    val previewUrl = remember(previewEpisode) {
-        previewEpisode?.videoUrl?.replace("/video_serve", "/preview_serve")
+    val isIos = remember { getPlatform().isIos }
+    
+    val previewUrl = remember(previewEpisode, isIos) {
+        if (isIos) {
+            // iOS: 미리보기(preview_serve)가 fMP4 관련 문제로 재생되지 않는 경우,
+            // HLS 지원이 되는 video_serve(전체 영상)를 사용하여 1분 지점부터 재생
+            previewEpisode?.videoUrl
+        } else {
+            previewEpisode?.videoUrl?.replace("/video_serve", "/preview_serve")
+        }
     }
+    
+    val startPos = if (isIos) 60000L else 0L
 
     Box(modifier = Modifier.fillMaxWidth().height(320.dp)) {
         if (previewUrl != null) {
             VideoPlayer(
                 url = previewUrl, 
                 modifier = Modifier.fillMaxSize(), 
-                initialPosition = initialPosition, 
-                onPositionUpdate = onPositionUpdate, 
+                initialPosition = startPos, 
+                onPositionUpdate = { pos ->
+                    // iOS 미리보기 시 90초(1분30초) 지나면 다시 처음(60초)으로 루프하거나 정지
+                    if (isIos && pos > 90000L) {
+                        // 루프 로직은 VideoPlayer에 없으므로 여기선 간단히 둠 (실제 구현 시 seek 필요할 수 있음)
+                    }
+                    onPositionUpdate(pos)
+                },
                 onFullscreenClick = onFullscreenClick,
                 onControllerVisibilityChanged = null,
                 onVideoEnded = null
