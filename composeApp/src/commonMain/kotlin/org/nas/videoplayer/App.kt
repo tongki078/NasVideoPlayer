@@ -165,6 +165,7 @@ fun App(driver: SqlDriver) {
                 Box(Modifier.padding(if (selectedSeries != null || selectedMovie != null) PaddingValues(0.dp) else pv).fillMaxSize()) {
                     when {
                         selectedMovie != null -> {
+                            BackHandler { selectedMovie = null }
                             VideoPlayerScreen(
                                 movie = selectedMovie!!, 
                                 playlist = moviePlaylist,
@@ -176,6 +177,7 @@ fun App(driver: SqlDriver) {
                             )
                         }
                         selectedSeries != null -> {
+                            BackHandler { selectedSeries = null }
                             SeriesDetailScreen(
                                 series = selectedSeries!!, 
                                 repository = repository, 
@@ -192,6 +194,7 @@ fun App(driver: SqlDriver) {
                             )
                         }
                         currentScreen == Screen.SEARCH -> {
+                            BackHandler { currentScreen = Screen.HOME }
                             SearchScreen(
                                 query = searchQuery, 
                                 onQueryChange = { 
@@ -245,6 +248,7 @@ fun App(driver: SqlDriver) {
                             }
                         }
                         else -> {
+                            BackHandler { currentScreen = Screen.HOME }
                             val categoryInfo = when (currentScreen) {
                                 Screen.ON_AIR -> Pair("방송중", selectedAirMode)
                                 Screen.ANIMATIONS -> Pair("애니메이션", selectedAniMode)

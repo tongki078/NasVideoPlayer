@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -105,8 +106,8 @@ fun ThemedCategoryScreen(
         }
 
         if (isLoading) {
-            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
-                items(3) { CategorySectionSkeleton() }
+            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                CircularProgressIndicator(color = Color.Red)
             }
         } else if (themedSections.isEmpty() || themedSections.all { it.items.isEmpty() }) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -118,8 +119,11 @@ fun ThemedCategoryScreen(
                 state = lazyListState,
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                items(themedSections) { section ->
+                itemsIndexed(themedSections) { index, section ->
                     if (section.items.isNotEmpty()) {
+                        if (index > 0) {
+                            Spacer(Modifier.height(20.dp))
+                        }
                         MovieRow(
                             title = section.title,
                             seriesList = section.items.flatMap { it.toSeriesList() },
@@ -193,25 +197,6 @@ private fun ExposedCategoryDropdown(
                 onDismissRequest = { onExpandedChange(false) },
                 content = content
             )
-        }
-    }
-}
-
-@Composable
-private fun CategorySectionSkeleton() {
-    Column(Modifier.padding(vertical = 16.dp)) {
-        Box(Modifier.padding(horizontal = 16.dp).width(150.dp).height(24.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-        Spacer(Modifier.height(16.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-            items(5) {
-                Box(
-                    modifier = Modifier
-                        .size(130.dp, 200.dp)
-                        .padding(end = 12.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(shimmerBrush())
-                )
-            }
         }
     }
 }

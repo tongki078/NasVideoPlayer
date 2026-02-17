@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,7 +34,6 @@ import org.nas.videoplayer.domain.model.Category
 import org.nas.videoplayer.domain.model.HomeSection
 import org.nas.videoplayer.data.WatchHistory
 import org.nas.videoplayer.cleanTitle
-import org.nas.videoplayer.ui.common.shimmerBrush
 
 @Composable
 fun HomeScreen(
@@ -46,11 +46,8 @@ fun HomeScreen(
     onHistoryClick: (WatchHistory) -> Unit = {}
 ) {
     if (isLoading) {
-        LazyColumn(Modifier.fillMaxSize().background(Color.Black)) {
-            item { HeroSectionSkeleton() }
-            repeat(3) {
-                item { SectionSkeleton() }
-            }
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color.Red)
         }
     } else {
         val heroCategory = remember(homeSections) {
@@ -85,20 +82,34 @@ fun HomeScreen(
                         }
                     }
                 }
+                // 시청 기록 다음에 홈 섹션이 있으면 간격 추가
+                if (homeSections.isNotEmpty()) {
+                    item { Spacer(Modifier.height(20.dp)) }
+                }
             }
 
-            homeSections.forEach { section ->
-                item { SectionTitle(section.title) }
-                item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                        items(section.items) { item ->
-                            MovieCard(
-                                title = item.name.cleanTitle(includeYear = false), 
-                                posterPath = item.posterPath,
-                                isAnimation = item.path?.contains("애니메이션") ?: false,
-                                onClick = { onSeriesClick(item.toSeries()) }
-                            )
-                        }
+            // 홈 섹션 반복 (인덱스 활용)
+            itemsIndexed(homeSections) { index, section ->
+                // 시청 기록이 없으면 첫 번째 섹션 위에는 간격을 주지 않고,
+                // 시청 기록이 있으면 위에서 이미 간격을 주었으므로 index > 0일 때만 추가
+                // 하지만 itemsIndexed는 리스트 내부의 인덱스이므로,
+                // watchHistory가 비어있을 때 index > 0인 경우에만 Spacer 추가
+                // watchHistory가 있을 때는 위에서 추가했으니, 여기서는 index > 0인 경우에만 추가하면 됨.
+                // 즉, "섹션 간"의 간격은 항상 index > 0 일 때 추가.
+                
+                if (index > 0) {
+                    Spacer(Modifier.height(20.dp))
+                }
+                
+                SectionTitle(section.title)
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
+                    items(section.items) { item ->
+                        MovieCard(
+                            title = item.name.cleanTitle(includeYear = false), 
+                            posterPath = item.posterPath,
+                            isAnimation = item.path?.contains("애니메이션") ?: false,
+                            onClick = { onSeriesClick(item.toSeries()) }
+                        )
                     }
                 }
             }
@@ -189,31 +200,5 @@ private fun SectionTitle(title: String) {
 private fun MovieCard(title: String, posterPath: String?, isAnimation: Boolean, onClick: () -> Unit) {
     Card(Modifier.size(130.dp, 200.dp).padding(end = 12.dp).clickable(onClick = onClick)) {
         TmdbAsyncImage(title = title, posterPath = posterPath, modifier = Modifier.fillMaxSize(), isAnimation = isAnimation)
-    }
-}
-
-@Composable
-private fun HeroSectionSkeleton() {
-    Box(modifier = Modifier.fillMaxWidth().height(550.dp).background(Color.Black), contentAlignment = Alignment.TopCenter) {
-        Box(modifier = Modifier.fillMaxSize().background(shimmerBrush()))
-        Box(modifier = Modifier.padding(top = 40.dp).width(280.dp).height(400.dp).clip(RoundedCornerShape(8.dp)).background(shimmerBrush()))
-        Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.width(200.dp).height(30.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-            Spacer(Modifier.height(20.dp))
-            Box(Modifier.width(120.dp).height(45.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-        }
-    }
-}
-
-@Composable
-private fun SectionSkeleton() {
-    Column(Modifier.padding(vertical = 16.dp)) {
-        Box(Modifier.padding(horizontal = 16.dp).width(150.dp).height(24.dp).clip(RoundedCornerShape(4.dp)).background(shimmerBrush()))
-        Spacer(Modifier.height(16.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-            items(5) {
-                Box(modifier = Modifier.size(130.dp, 200.dp).padding(end = 12.dp).clip(RoundedCornerShape(8.dp)).background(shimmerBrush()))
-            }
-        }
     }
 }
