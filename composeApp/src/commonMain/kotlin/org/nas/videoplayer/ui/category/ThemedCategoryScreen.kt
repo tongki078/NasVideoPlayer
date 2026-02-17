@@ -186,7 +186,7 @@ private fun ExposedCategoryDropdown(
                     focusedLabelColor = Color.Red,
                     unfocusedLabelColor = Color.Gray
                 ),
-                modifier = Modifier.fillMaxWidth().menuAnchor()
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
             )
             ExposedDropdownMenu(
                 expanded = expanded,

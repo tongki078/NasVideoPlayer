@@ -966,6 +966,21 @@ def retry_failed_metadata():
     threading.Thread(target=fetch_metadata_async, args=(False,), daemon=False).start()
     return jsonify({"status": "success", "message": "Retrying failed metadata and updating matched series with stills."})
 
+FFMPEG_PROCS = {}
+
+def kill_old_processes(sid):
+    if sid in FFMPEG_PROCS:
+        try:
+            FFMPEG_PROCS[sid].terminate()
+            FFMPEG_PROCS[sid].wait()
+        except: pass
+        del FFMPEG_PROCS[sid]
+    sdir = os.path.join(HLS_ROOT, sid)
+    if os.path.exists(sdir):
+        try: shutil.rmtree(sdir)
+        except: pass
+
+
 @app.route('/video_serve')
 def video_serve():
     path, prefix = request.args.get('path'), request.args.get('type')
@@ -975,10 +990,36 @@ def video_serve():
         if not os.path.exists(full_path):
              log("VIDEO", f"File not found: {full_path}")
              return "Not Found", 404
+
+        # [iOS HLS Logic]
+        ua = request.headers.get('User-Agent', '').lower()
+        is_ios = any(x in ua for x in ['iphone', 'ipad', 'apple', 'avfoundation'])
+        if is_ios and not full_path.lower().endswith(('.mp4', '.m4v', '.mov')):
+            sid = hashlib.md5(full_path.encode()).hexdigest()
+            kill_old_processes(sid)
+
+            sdir = os.path.join(HLS_ROOT, sid)
+            os.makedirs(sdir, exist_ok=True)
+            video_m3u8 = os.path.join(sdir, "video.m3u8")
+
+            if not os.path.exists(video_m3u8):
+                cmd = [FFMPEG_PATH, '-y', '-i', full_path, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+                       '-sn', '-c:a', 'aac', '-f', 'hls', '-hls_time', '6', '-hls_list_size', '0', video_m3u8]
+                FFMPEG_PROCS[sid] = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                for _ in range(40):
+                    if os.path.exists(video_m3u8): break
+                    time.sleep(0.5)
+
+            return redirect(f"http://{MY_IP}:5000/hls/{sid}/video.m3u8")
+
         return send_file(full_path, conditional=True)
     except:
         log("VIDEO", f"Error serving video: {traceback.format_exc()}")
         return "Internal Server Error", 500
+
+@app.route('/hls/<sid>/<filename>')
+def serve_hls(sid, filename):
+    return send_from_directory(os.path.join(HLS_ROOT, sid), filename)
 
 # --- [새로운 고속 미리보기 엔드포인트] ---
 @app.route('/preview_serve')

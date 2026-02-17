@@ -1,11 +1,13 @@
 package org.nas.videoplayer.domain.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
 data class Category(
     val name: String,
     val path: String? = null,
+    @SerialName("movies")
     val movies: List<Movie> = emptyList(),
     val genreIds: List<Int>? = null,
     val genreNames: List<String>? = null,
@@ -17,7 +19,7 @@ data class Category(
     val director: String? = null,
     val actors: List<Actor>? = null,
     val tmdbId: String? = null,
-    val failed: Boolean = false
+    val failed: Int = 0 // Changed from Boolean to Int to match server response (0 or 1)
 )
 
 @Serializable
@@ -59,6 +61,15 @@ data class Series(
     val actors: List<Actor>? = null,
     val rating: String? = null,
     val tmdbId: String? = null
+)
+
+data class Season(val name: String, val episodes: List<Movie>, val seasonNumber: Int)
+
+data class SeriesDetailState(
+    val detail: Category? = null,
+    val seasons: List<Season> = emptyList(),
+    val isLoading: Boolean = true,
+    val selectedSeasonIndex: Int = 0
 )
 
 enum class Screen { HOME, SEARCH, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, KOREAN_TV, LATEST }

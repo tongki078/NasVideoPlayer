@@ -81,40 +81,31 @@ internal val tmdbCache = mutableMapOf<String, TmdbMetadata>()
 fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = true): String {
     var cleaned = this
     
-    // 1. 확장자 제거
     cleaned = cleaned.replace(Regex("""\.[a-zA-Z0-9]{2,4}$"""), "")
-    
-    // 2. TMDB 힌트 및 채널 태그 제거 ([KBS], {tmdb-123} 등)
     cleaned = cleaned.replace(Regex("""\{tmdb[\s-]*\d+\}"""), "")
     cleaned = cleaned.replace(Regex("""^\[.*?\]\s*"""), "")
     
-    // 3. 연도 추출
-    val yearMatch = Regex("""\((19|20)\d{2}\)|(?<!\d)(19|20)\d{2}(?!\d)""").find(cleaned)
-    val yearStr = yearMatch?.value?.replace("(", "")?.replace(")", "")
+    val yearMatch = Regex("""\b(19|20)\d{2}\b""").find(cleaned)
+    val yearStr = yearMatch?.value
     if (yearMatch != null) cleaned = cleaned.replace(yearMatch.value, " ")
 
-    // 4. 에피소드 마커 처리 (자르기)
     if (!keepAfterHyphen) {
-        val epMatch = Regex("""(?i)[.\s_-](?:S\d+E\d+|S\d+|E\d+|\d+\s*(?:화|회|기|부|話)|Season\s*\d+|Episode\s*\d+|시즌\s*\d+|Part\s*\d+)(?:\b|[.\s_-]|$)""").find(cleaned)
+        val epMatch = Regex("""(?i)[.\s_-](?:S\d+E\d+|S\d+|E\d+|\d+\s*(?:화|회|기|부|話)|Season\s*\d+|Episode\s*\d+|시즌\s*\d+|Part\s*\d+)""").find(cleaned)
         if (epMatch != null) {
             cleaned = cleaned.substring(0, epMatch.range.first)
         }
     }
 
-    // 5. 기술적 태그 및 릴리스 정보 대폭 제거
-    val techTags = """(?i)[.\s_-](?:(?:\d{3,4}p|2160p|FHD|QHD|UHD|4K|Bluray|Blu-ray|WEB-DL|WEBRip|HDRip|BDRip|DVDRip|H\.?26[45]|x26[45]|HEVC|AVC|AAC\d?|DTS-?H?D?|AC3|DDP\d?|DD\+\d?|Dual|Atmos|REPACK|10bit|REMUX|FLAC|xvid|DivX|MKV|MP4|AVI|HDR(?:10)?(?:\+)?|Vision|Dolby|NF|AMZN|HMAX|DSNP|AppleTV|Disney|PCOK|playWEB|ATVP|HULU|HDTV|HD|NEXT|ST|SW|KL|YT|MVC|KN|FLUX|KOREAN|KOR|JAPANESE|JPN|CHINESE|CHN|ENGLISH|ENG|USA|HK|TW|WEB|DL|TVRip|IMAX|Unrated|REMASTERED|Criterion|NonDRM|BRRip|1080i|720i|국어|더빙|자막|극장판|무삭제|감독판|확장판|익스텐디드|(?<!\S)[상하](?!\S)).*)$"""
+    val techTags = """(?i)[.\s_-](?:(?:\d{3,4}p|2160p|FHD|QHD|UHD|4K|Bluray|Blu-ray|WEB-DL|WEBRip|HDRip|BDRip|DVDRip|H\.?26[45]|x26[45]|HEVC|AVC|AAC\d?|DTS-?H?D?|AC3|DDP\d?|DD\+\d?|Dual|Atmos|REPACK|10bit|REMUX|FLAC|xvid|DivX|MKV|MP4|AVI|HDR(?:10)?(?:\+)?|Vision|Dolby|NF|AMZN|HMAX|DSNP|AppleTV|Disney|PCOK|playWEB|ATVP|HULU|HDTV|HD|NEXT|ST|SW|KL|YT|MVC|KN|FLUX|KOREAN|KOR|JAPANESE|JPN|CHINESE|CHN|ENGLISH|ENG|USA|HK|TW|WEB|DL|TVRip|IMAX|Unrated|REMASTERED|Criterion|NonDRM|BRRip|1080i|720i|국어|더빙|자막|극장판|무삭제|감독판|확장판|익스텐디드).*)$"""
     cleaned = cleaned.replace(Regex(techTags), "")
 
-    // 6. 브래킷 내부 텍스트 정리
     cleaned = cleaned.replace(Regex("""\[.*?\]|\(.*?\)|【.*?】|『.*?』|「.*?」|（.*?）"""), " ")
     
-    // 7. 한글/영어 경계 공백 추가
     cleaned = Regex("""([가-힣\u3040-\u30ff\u4e00-\u9fff])([a-zA-Z])""").replace(cleaned, "$1 $2")
     cleaned = Regex("""([a-zA-Z])([가-힣\u3040-\u30ff\u4e00-\u9fff])""").replace(cleaned, "$1 $2")
 
-    // 8. 특수문자 제거 및 공백 정리
     cleaned = cleaned.replace(Regex("""[._\-::!?#@*※×,~:;]"""), " ")
-    cleaned = cleaned.replace(Regex("""^\s*\d{1,3}[.\s_-]+"""), "") // 숫자 인덱스 제거
+    cleaned = cleaned.replace(Regex("""^\s*\d{1,3}[.\s_-]+"""), "")
     cleaned = cleaned.replace(Regex("""\s+"""), " ").trim()
     
     if (cleaned.isEmpty()) cleaned = this.replace(Regex("""\.[a-zA-Z0-9]{2,4}$"""), "")
@@ -123,21 +114,12 @@ fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = t
 }
 
 fun String.extractEpisode(): String? {
-    // S01E05 -> 5화
     Regex("""(?i)S\d+E(\d+)""").find(this)?.let { return "${it.groupValues[1].toInt()}화" }
-    // E05 -> 5화
     Regex("""(?i)[.\s_-]E(\d+)""").find(this)?.let { return "${it.groupValues[1].toInt()}화" }
-    // 13화, 13회
     Regex("""(\d+)\s*(?:화|회|話)""").find(this)?.let { return "${it.groupValues[1].toInt()}화" }
-    // [13] 또는 (13) 형태의 에피소드 번호
     Regex("""[\[\(](\d+)[\]\)]""").find(this)?.let { 
         val num = it.groupValues[1].toInt()
         if (num < 1000) return "${num}화" 
-    }
-    // 공백이나 점으로 구분된 숫자
-    Regex("""(?<=[.\s_-])(\d{1,3})(?=[.\s_-]|$)""").find(this)?.let {
-        val num = it.groupValues[1].toInt()
-        if (num in 1..999) return "${num}화"
     }
     return null
 }
@@ -155,7 +137,6 @@ fun String.prettyTitle(): String {
     
     if (ep == null) return rawBase.cleanTitle(includeYear = false)
     
-    // 하이픈으로 구분된 부제목이 있는 경우: "제목 S01E01 - 부제" -> "제목 1화 - 부제"
     if (rawBase.contains(" - ")) {
         val parts = rawBase.split(" - ", limit = 2)
         val mainTitle = parts[0].cleanTitle(includeYear = false)
@@ -183,36 +164,22 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null, isAnimati
     tmdbCache[cacheKey]?.let { return it }
 
     val cleanTitleForSearch = title.cleanTitle(includeYear = false)
-    val yearMatch = Regex("""\((19|20)\d{2}\)|(?<!\d)(19|20)\d{2}(?!\d)""").find(title)
-    val year = yearMatch?.value?.replace("(", "")?.replace(")", "")
+    val yearMatch = Regex("""\b(19|20)\d{2}\b""").find(title)
+    val year = yearMatch?.value
 
     val searchStrategies = mutableListOf<Triple<String, String?, String?>>()
-    
-    // 애니메이션인 경우 제목 뒤에 "애니메이션"을 붙여 검색 결과의 정확도를 높임
-    if (isAnimation) {
-        searchStrategies.add(Triple("$cleanTitleForSearch 애니메이션", "ko-KR", year))
-    }
-    
+    if (isAnimation) searchStrategies.add(Triple("$cleanTitleForSearch 애니메이션", "ko-KR", year))
     searchStrategies.add(Triple(cleanTitleForSearch, "ko-KR", year))
     searchStrategies.add(Triple(cleanTitleForSearch, null, year))
-    
-    val baseTitle = title.cleanTitle(includeYear = false)
-    if (baseTitle != cleanTitleForSearch) {
-        searchStrategies.add(Triple(baseTitle, "ko-KR", year))
-    }
 
     var finalMetadata: TmdbMetadata? = null
     var hasNetworkError = false
-
-    // 애니메이션은 주로 TV 섹션에 많으므로 힌트가 없으면 tv로 시도
     val effectiveTypeHint = if (isAnimation && (typeHint == null || typeHint == "multi")) "tv" else typeHint
 
     for ((q, lang, y) in searchStrategies.distinct()) {
         val (res, error) = searchTmdb(q, lang, effectiveTypeHint, y, isAnimation)
         if (error != null) { hasNetworkError = true; break }
-        
         if (res != null && (res.posterUrl != null || res.tmdbId != null)) {
-            // 애니메이션 검색일 경우, 애니메이션 장르(16)가 포함된 결과를 찾을 때까지 계속 탐색 가능하도록 로직 보완
             if (isAnimation && !res.genreIds.contains(16)) {
                 if (finalMetadata == null) finalMetadata = res
                 continue 
@@ -223,15 +190,6 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null, isAnimati
     }
 
     var result = finalMetadata ?: TmdbMetadata()
-
-    if (result.posterUrl == null && result.tmdbId != null && result.mediaType != null) {
-        val credits = fetchTmdbCredits(result.tmdbId!!, result.mediaType)
-        val firstCastProfilePath = credits.firstOrNull { !it.profilePath.isNullOrBlank() }?.profilePath
-        if (firstCastProfilePath != null) {
-            result = result.copy(posterUrl = "$TMDB_IMAGE_BASE$TMDB_POSTER_SIZE_MEDIUM$firstCastProfilePath")
-        }
-    }
-
     if (!result.overview.isNullOrBlank() && !result.overview!!.contains(Regex("""[가-힣]"""))) {
         result = result.copy(overview = translateToKorean(result.overview!!))
     }
@@ -243,7 +201,7 @@ suspend fun fetchTmdbMetadata(title: String, typeHint: String? = null, isAnimati
 private suspend fun searchTmdb(query: String, language: String?, typeHint: String? = null, year: String? = null, isAnimation: Boolean = false): Pair<TmdbMetadata?, Exception?> {
     if (query.isBlank()) return null to null
     return try {
-        val endpoint = if (typeHint != null) typeHint else "multi"
+        val endpoint = typeHint ?: "multi"
         val response: TmdbSearchResponse = tmdbClient.get("$TMDB_BASE_URL/search/$endpoint") {
             if (TMDB_API_KEY.startsWith("eyJ")) header("Authorization", "Bearer $TMDB_API_KEY")
             else parameter("api_key", TMDB_API_KEY)
@@ -261,20 +219,10 @@ private suspend fun searchTmdb(query: String, language: String?, typeHint: Strin
         if (results.isEmpty()) return null to null
 
         val result = results.sortedWith(
-            compareByDescending<TmdbResult> { 
-                // 1. 애니메이션 검색 시 장르 ID 16(애니메이션) 최우선
-                if (isAnimation) it.genreIds?.contains(16) == true else true 
-            }.thenByDescending { 
-                // 2. 제목 일치 여부
-                it.name?.equals(query, ignoreCase = true) == true || it.title?.equals(query, ignoreCase = true) == true 
-            }.thenByDescending { 
-                it.posterPath != null 
-            }.thenByDescending { 
-                // 3. 일본 원산지 우선 (애니메이션인 경우)
-                if (isAnimation) it.originCountry?.contains("JP") == true else false 
-            }.thenByDescending { 
-                it.voteCount ?: 0 
-            }
+            compareByDescending<TmdbResult> { if (isAnimation) it.genreIds?.contains(16) == true else true }
+            .thenByDescending { it.name?.equals(query, ignoreCase = true) == true || it.title?.equals(query, ignoreCase = true) == true }
+            .thenByDescending { it.posterPath != null }
+            .thenByDescending { if (isAnimation) it.originCountry?.contains("JP") == true else false }
         ).firstOrNull()
 
         if (result != null) {

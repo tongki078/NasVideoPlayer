@@ -3,14 +3,15 @@ package org.nas.videoplayer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.interop.UIKitViewController
-import platform.AVFoundation.*
-import platform.AVKit.*
-import platform.Foundation.*
-import platform.UIKit.*
-import platform.CoreMedia.*
 import kotlinx.cinterop.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import platform.AVFoundation.*
+import platform.AVKit.*
+import platform.CoreMedia.*
+import platform.Foundation.*
+import platform.UIKit.*
+import platform.darwin.NSObject
 import org.nas.videoplayer.data.network.NasApiClient
 
 @OptIn(ExperimentalForeignApi::class)
@@ -33,17 +34,13 @@ actual fun VideoPlayer(
 
     val player = remember { AVPlayer() }
     
-    val playerViewController = remember {
-        val controller = AVPlayerViewController()
-        controller.player = player
-        controller.showsPlaybackControls = true
-        controller.videoGravity = AVLayerVideoGravityResizeAspect
-        controller
-    }
+    // Create AVPlayerViewController inside remember to persist it across recompositions
+    val playerViewController = remember { AVPlayerViewController() }
 
     LaunchedEffect(player) {
         while (isActive) {
-            val currentTime = CMTimeGetSeconds(player.currentTime())
+            val currentCValue = player.currentTime()
+            val currentTime = CMTimeGetSeconds(currentCValue)
             if (!currentTime.isNaN()) {
                 currentOnPositionUpdate?.invoke((currentTime * 1000).toLong())
             }
@@ -55,7 +52,7 @@ actual fun VideoPlayer(
         val observer = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemDidPlayToEndTimeNotification,
             `object` = null,
-            queue = null
+            queue = NSOperationQueue.mainQueue
         ) { _ ->
             currentOnVideoEnded?.invoke()
         }
@@ -71,25 +68,30 @@ actual fun VideoPlayer(
         if (absoluteUrl.isBlank()) return@LaunchedEffect
 
         val nsUrl = NSURL.URLWithString(absoluteUrl) ?: return@LaunchedEffect
-        player.pause()
         val item = AVPlayerItem.playerItemWithURL(nsUrl)
         player.replaceCurrentItemWithPlayerItem(item)
 
         if (initialPosition > 0) {
-            val cmTime = CMTimeMake((initialPosition / 1000).toLong(), 1)
+            // Use CMTimeMake for precise seeking. initialPosition is in milliseconds.
+            // CMTimeMake(value, timescale) -> value / timescale = seconds
+            val cmTime = CMTimeMake(initialPosition, 1000)
             player.seekToTime(cmTime)
         }
         player.play()
     }
 
+    @Suppress("DEPRECATION")
     UIKitViewController(
         factory = {
-            playerViewController.showsPlaybackControls = true
-            playerViewController
+            playerViewController.apply {
+                this.player = player
+                this.showsPlaybackControls = true
+                this.videoGravity = AVLayerVideoGravityResizeAspect
+            }
         },
         modifier = modifier,
         update = {
-            playerViewController.showsPlaybackControls = true
+            // No update needed as the player is managed internally
         }
     )
 }
