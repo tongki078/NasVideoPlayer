@@ -70,7 +70,7 @@ fun HeroSection(category: Category, onInfoClick: () -> Unit, onPlayClick: () -> 
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Button(
-                    onClick = onPlayClick,
+                    onClick = { onPlayClick() },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                     shape = RoundedCornerShape(4.dp),
                     modifier = Modifier.height(45.dp).weight(1f)

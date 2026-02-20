@@ -60,6 +60,10 @@ fun HomeScreen(
                             val firstEp = heroCategory.movies.firstOrNull()
                             if (firstEp != null) {
                                 onPlayClick(firstEp, heroCategory.movies)
+                            } else {
+                                // movies가 비어있을 경우 (상세 정보를 아직 안가져와서 그럴 수 있음)
+                                // 정보를 띄우는 것으로 대체 (상세 페이지에서 에피소드를 다시 로드하도록)
+                                onSeriesClick(heroCategory.toSeries())
                             }
                         }
                     )

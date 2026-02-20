@@ -140,6 +140,8 @@ fun ThemedCategoryScreen(
                                 val firstEp = heroCategory!!.movies.firstOrNull()
                                 if (firstEp != null) {
                                     onPlayClick(firstEp, heroCategory!!.movies)
+                                } else {
+                                    onSeriesClick(heroCategory!!.toSeries())
                                 }
                             }
                         )

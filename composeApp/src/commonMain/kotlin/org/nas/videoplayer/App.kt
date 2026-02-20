@@ -2,9 +2,6 @@ package org.nas.videoplayer
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -137,27 +134,10 @@ fun App(driver: SqlDriver) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(
                 topBar = {
-                    // 상세 페이지나 검색 중일 때는 상단 네비게이션 숨김
-                    if (selectedMovie == null && currentScreen != Screen.SEARCH && selectedSeries == null) {
+                    if (selectedMovie == null && selectedSeries == null) {
                         NetflixTopBar(currentScreen) { 
                             currentScreen = it
                             selectedSeries = null 
-                        }
-                    }
-                },
-                bottomBar = { 
-                    if (selectedMovie == null) {
-                        NavigationBar(containerColor = Color.Black) {
-                            NavigationBarItem(
-                                selected = currentScreen == Screen.HOME, 
-                                onClick = { currentScreen = Screen.HOME; selectedSeries = null }, 
-                                icon = { Icon(Icons.Default.Home, null) }, label = { Text("홈") }
-                            )
-                            NavigationBarItem(
-                                selected = currentScreen == Screen.SEARCH, 
-                                onClick = { currentScreen = Screen.SEARCH; selectedSeries = null }, 
-                                icon = { Icon(Icons.Default.Search, null) }, label = { Text("검색") }
-                            )
                         }
                     }
                 }
