@@ -1,5 +1,6 @@
 package org.nas.videoplayer.ui.category
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,7 +16,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.nas.videoplayer.domain.model.Series
 import org.nas.videoplayer.domain.model.Movie
 import org.nas.videoplayer.domain.model.Category
@@ -209,28 +212,33 @@ private fun ExposedCategoryDropdown(
     selectedText: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-     Box(modifier = Modifier.padding(16.dp)) {
+    // 둥글고 작은 세련된 스타일의 드롭다운 앵커
+    Box(modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp)) {
         ExposedDropdownMenuBox(
             expanded = expanded,
-            onExpandedChange = onExpandedChange,
-            modifier = Modifier.fillMaxWidth()
+            onExpandedChange = onExpandedChange
         ) {
-            OutlinedTextField(
-                value = selectedText,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("카테고리 선택", color = Color.Gray) },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color.Red,
-                    unfocusedBorderColor = Color.Gray,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedLabelColor = Color.Red,
-                    unfocusedLabelColor = Color.Gray
-                ),
-                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
-            )
+            Surface(
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                color = Color.DarkGray.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedText,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                }
+            }
+
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { onExpandedChange(false) },
