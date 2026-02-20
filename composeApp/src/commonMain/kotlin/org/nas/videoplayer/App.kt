@@ -227,9 +227,9 @@ fun App(driver: SqlDriver) {
                                     isLoading = isHomeLoading, 
                                     lazyListState = homeLazyListState,
                                     onSeriesClick = { selectedSeries = it }, 
-                                    onPlayClick = { movie ->
+                                    onPlayClick = { movie, playlist ->
                                         selectedMovie = movie
-                                        moviePlaylist = listOf(movie)
+                                        moviePlaylist = playlist
                                         lastPlaybackPosition = 0L
                                         saveWatchHistory(movie)
                                     },
@@ -274,7 +274,13 @@ fun App(driver: SqlDriver) {
                                     selectedMode = categoryInfo.second,
                                     onModeChange = onModeChange,
                                     lazyListState = themedCategoryLazyListState,
-                                    onSeriesClick = { selectedSeries = it }
+                                    onSeriesClick = { selectedSeries = it },
+                                    onPlayClick = { movie, playlist ->
+                                        selectedMovie = movie
+                                        moviePlaylist = playlist
+                                        lastPlaybackPosition = 0L
+                                        saveWatchHistory(movie)
+                                    }
                                 )
                             }
                         }

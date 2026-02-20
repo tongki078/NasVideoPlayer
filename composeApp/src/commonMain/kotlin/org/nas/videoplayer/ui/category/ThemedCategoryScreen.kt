@@ -17,12 +17,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.nas.videoplayer.domain.model.Series
+import org.nas.videoplayer.domain.model.Movie
 import org.nas.videoplayer.domain.model.Category
 import org.nas.videoplayer.domain.model.HomeSection
 import org.nas.videoplayer.domain.repository.VideoRepository
 import org.nas.videoplayer.ui.common.MovieRow
 import org.nas.videoplayer.ui.common.shimmerBrush
 import org.nas.videoplayer.cleanTitle
+import org.nas.videoplayer.ui.common.HeroSection
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,7 +34,8 @@ fun ThemedCategoryScreen(
     selectedMode: Int,
     onModeChange: (Int) -> Unit,
     lazyListState: LazyListState = rememberLazyListState(),
-    onSeriesClick: (Series) -> Unit
+    onSeriesClick: (Series) -> Unit,
+    onPlayClick: (Movie, List<Movie>) -> Unit
 ) {
     // UI의 탭 이름(애니, 외국 TV 등)을 서버 코드의 categoryCode와 정확히 매칭
     val categoryCode = when (categoryName) {
@@ -56,6 +59,12 @@ fun ThemedCategoryScreen(
     var expanded by remember { mutableStateOf(false) }
     var themedSections by remember(selectedMode, categoryName) { mutableStateOf<List<HomeSection>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+
+    var heroCategory by remember(themedSections) { 
+        mutableStateOf(
+            themedSections.flatMap { it.items }.takeIf { it.isNotEmpty() }?.random()
+        ) 
+    }
 
     LaunchedEffect(selectedMode, categoryName) {
         isLoading = true
@@ -119,6 +128,22 @@ fun ThemedCategoryScreen(
                 state = lazyListState,
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
+                if (heroCategory != null) {
+                    item {
+                        HeroSection(
+                            category = heroCategory!!,
+                            onInfoClick = { onSeriesClick(heroCategory!!.toSeries()) },
+                            onPlayClick = {
+                                val firstEp = heroCategory!!.movies.firstOrNull()
+                                if (firstEp != null) {
+                                    onPlayClick(firstEp, heroCategory!!.movies)
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(20.dp))
+                    }
+                }
+                
                 itemsIndexed(themedSections) { index, section ->
                     if (section.items.isNotEmpty()) {
                         if (index > 0) {
@@ -135,6 +160,20 @@ fun ThemedCategoryScreen(
         }
     }
 }
+
+private fun Category.toSeries() = Series(
+    title = this.name.cleanTitle(includeYear = false),
+    episodes = this.movies,
+    posterPath = this.posterPath,
+    overview = this.overview,
+    year = this.year,
+    fullPath = this.path,
+    genreNames = this.genreNames,
+    director = this.director,
+    actors = this.actors,
+    rating = this.rating,
+    tmdbId = this.tmdbId
+)
 
 private fun Category.toSeriesList(): List<Series> {
     if (this.movies.isEmpty()) {
