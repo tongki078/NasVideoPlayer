@@ -81,14 +81,28 @@ internal val tmdbCache = mutableMapOf<String, TmdbMetadata>()
 fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = true): String {
     var cleaned = this
     
+    // 1. 확장자 제거
     cleaned = cleaned.replace(Regex("""\.[a-zA-Z0-9]{2,4}$"""), "")
+    
+    // 2. 파일명에서 느낌표(!) 혹은 특수문자 뒤에 오는 "E01.251031.1080p-KL" 같은 불필요한 에피소드 포맷을 먼저 잘라냅니다.
+    // "내가 너무 귀여운 걸 어쩌겠어!.E01..." -> "내가 너무 귀여운 걸 어쩌겠어!" 만 남기기 위함
+    val junkPattern = Regex("""(?i)(!|\?|~|\.)\s*(E\d+|\d+화|S\d+).*$""")
+    val junkMatch = junkPattern.find(cleaned)
+    if (junkMatch != null) {
+        // 느낌표 등은 살려두기 위해 매치된 시작 인덱스 + 1 까지만 자릅니다.
+        cleaned = cleaned.substring(0, junkMatch.range.first + 1)
+    }
+
+    // 3. 괄호, 대괄호로 묶인 불필요한 태그 제거
     cleaned = cleaned.replace(Regex("""\{tmdb[\s-]*\d+\}"""), "")
     cleaned = cleaned.replace(Regex("""^\[.*?\]\s*"""), "")
     
+    // 4. 연도 추출 및 제거
     val yearMatch = Regex("""\b(19|20)\d{2}\b""").find(cleaned)
     val yearStr = yearMatch?.value
     if (yearMatch != null) cleaned = cleaned.replace(yearMatch.value, " ")
 
+    // 5. 일반적인 에피소드 표기 제거
     if (!keepAfterHyphen) {
         val epMatch = Regex("""(?i)[.\s_-](?:S\d+E\d+|S\d+|E\d+|\d+\s*(?:화|회|기|부|話)|Season\s*\d+|Episode\s*\d+|시즌\s*\d+|Part\s*\d+)""").find(cleaned)
         if (epMatch != null) {
@@ -96,15 +110,19 @@ fun String.cleanTitle(keepAfterHyphen: Boolean = false, includeYear: Boolean = t
         }
     }
 
+    // 6. 기술 태그(해상도, 릴그룹 등) 제거
     val techTags = """(?i)[.\s_-](?:(?:\d{3,4}p|2160p|FHD|QHD|UHD|4K|Bluray|Blu-ray|WEB-DL|WEBRip|HDRip|BDRip|DVDRip|H\.?26[45]|x26[45]|HEVC|AVC|AAC\d?|DTS-?H?D?|AC3|DDP\d?|DD\+\d?|Dual|Atmos|REPACK|10bit|REMUX|FLAC|xvid|DivX|MKV|MP4|AVI|HDR(?:10)?(?:\+)?|Vision|Dolby|NF|AMZN|HMAX|DSNP|AppleTV|Disney|PCOK|playWEB|ATVP|HULU|HDTV|HD|NEXT|ST|SW|KL|YT|MVC|KN|FLUX|KOREAN|KOR|JAPANESE|JPN|CHINESE|CHN|ENGLISH|ENG|USA|HK|TW|WEB|DL|TVRip|IMAX|Unrated|REMASTERED|Criterion|NonDRM|BRRip|1080i|720i|국어|더빙|자막|극장판|무삭제|감독판|확장판|익스텐디드).*)$"""
     cleaned = cleaned.replace(Regex(techTags), "")
 
+    // 7. 괄호 안의 내용 공백 처리 (단, 제목에 원래 포함된 괄호일 수도 있으므로 주의)
     cleaned = cleaned.replace(Regex("""\[.*?\]|\(.*?\)|【.*?】|『.*?』|「.*?」|（.*?）"""), " ")
     
+    // 8. 한글과 영문 사이 띄어쓰기
     cleaned = Regex("""([가-힣\u3040-\u30ff\u4e00-\u9fff])([a-zA-Z])""").replace(cleaned, "$1 $2")
     cleaned = Regex("""([a-zA-Z])([가-힣\u3040-\u30ff\u4e00-\u9fff])""").replace(cleaned, "$1 $2")
 
-    cleaned = cleaned.replace(Regex("""[._\-::!?#@*※×,~:;]"""), " ")
+    // 9. 불필요한 특수문자 공백 처리 (단, ! 나 ? 는 제목의 일부일 확률이 높으므로 남김)
+    cleaned = cleaned.replace(Regex("""[._\-::#@*※×,~;]"""), " ")
     cleaned = cleaned.replace(Regex("""^\s*\d{1,3}[.\s_-]+"""), "")
     cleaned = cleaned.replace(Regex("""\s+"""), " ").trim()
     
@@ -120,6 +138,11 @@ fun String.extractEpisode(): String? {
     Regex("""[\[\(](\d+)[\]\)]""").find(this)?.let { 
         val num = it.groupValues[1].toInt()
         if (num < 1000) return "${num}화" 
+    }
+    // "E01" 처럼 붙어있는 경우 처리
+    val rawExtracted = Regex("""(?i)(?:!|\?|~|\.)\s*E(\d+)""").find(this)
+    if(rawExtracted != null) {
+        return "${rawExtracted.groupValues[1].toInt()}화"
     }
     return null
 }
