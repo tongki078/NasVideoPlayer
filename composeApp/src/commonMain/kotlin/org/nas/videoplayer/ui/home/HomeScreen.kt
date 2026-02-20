@@ -73,8 +73,17 @@ fun HomeScreen(
             if (watchHistory.isNotEmpty()) {
                 item { SectionTitle("시청 중인 콘텐츠") }
                 item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                        items(watchHistory) { history ->
+                    val listState = androidx.compose.runtime.saveable.rememberSaveable(
+                        "watch_history", 
+                        saver = androidx.compose.foundation.lazy.LazyListState.Saver
+                    ) {
+                        androidx.compose.foundation.lazy.LazyListState()
+                    }
+                    LazyRow(
+                        state = listState,
+                        contentPadding = PaddingValues(horizontal = 16.dp)
+                    ) {
+                        items(watchHistory, key = { it.id }) { history ->
                             MovieCard(
                                 title = history.title.cleanTitle(),
                                 posterPath = null, // 시청 기록에는 posterPath가 없음
@@ -91,7 +100,7 @@ fun HomeScreen(
             }
 
             // 홈 섹션 반복 (인덱스 활용)
-            itemsIndexed(homeSections) { index, section ->
+            itemsIndexed(homeSections, key = { _, section -> section.title }) { index, section ->
                 // 시청 기록이 없으면 첫 번째 섹션 위에는 간격을 주지 않고,
                 // 시청 기록이 있으면 위에서 이미 간격을 주었으므로 index > 0일 때만 추가
                 if (index > 0) {
@@ -99,8 +108,19 @@ fun HomeScreen(
                 }
                 
                 SectionTitle(section.title)
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                    items(section.items) { item ->
+                
+                val listState = androidx.compose.runtime.saveable.rememberSaveable(
+                    "home_section_${section.title}", 
+                    saver = androidx.compose.foundation.lazy.LazyListState.Saver
+                ) {
+                    androidx.compose.foundation.lazy.LazyListState()
+                }
+
+                LazyRow(
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = 16.dp)
+                ) {
+                    items(section.items, key = { it.path ?: it.name }) { item ->
                         MovieCard(
                             title = item.name.cleanTitle(includeYear = false), 
                             posterPath = item.posterPath,

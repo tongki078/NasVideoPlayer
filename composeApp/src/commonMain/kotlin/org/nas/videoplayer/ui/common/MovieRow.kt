@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -20,9 +21,21 @@ import org.nas.videoplayer.domain.model.Series
 fun MovieRow(
     title: String,
     seriesList: List<Series>,
-    onSeriesClick: (Series) -> Unit
+    onSeriesClick: (Series) -> Unit,
+    // Add an optional unique key to preserve scroll state across compositions if needed
+    rowKey: String = title
 ) {
     if (seriesList.isEmpty()) return
+    
+    // rememberLazyListState can maintain its state across simple recompositions
+    // but usually in a LazyColumn, we might need a custom key or saveable state
+    // We use a keyed remember here to associate the state with this specific row
+    val listState = androidx.compose.runtime.saveable.rememberSaveable(
+        rowKey, 
+        saver = androidx.compose.foundation.lazy.LazyListState.Saver
+    ) {
+        androidx.compose.foundation.lazy.LazyListState()
+    }
     
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Text(
@@ -35,10 +48,12 @@ fun MovieRow(
             modifier = Modifier.padding(start = 16.dp, bottom = 12.dp)
         )
         LazyRow(
+            state = listState,
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(seriesList) { series ->
+            // Use path as key since titles might be duplicated after cleaning (e.g. "Idol I" error)
+            items(seriesList, key = { it.fullPath ?: it.title }) { series ->
                 Card(
                     modifier = Modifier
                         .width(130.dp)
@@ -48,6 +63,7 @@ fun MovieRow(
                 ) {
                     TmdbAsyncImage(
                         title = series.title, 
+                        posterPath = series.posterPath,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

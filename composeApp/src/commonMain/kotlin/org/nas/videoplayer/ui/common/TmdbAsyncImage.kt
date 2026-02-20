@@ -50,6 +50,7 @@ fun TmdbAsyncImage(
     
     Box(
         modifier = modifier
+            .background(Color.DarkGray)
             .background(shimmerBrush(showShimmer = isLoading && !isError))
     ) {
         if (imageUrl != null) {
@@ -66,14 +67,15 @@ fun TmdbAsyncImage(
             )
         }
         
-        if (isError && !isLoading && imageUrl == null) {
+        // 이미지가 로드 실패했거나 원래부터 포스터 경로가 없는 경우 제목을 표시합니다.
+        if (!isLoading && (isError || imageUrl == null)) {
             Box(Modifier.fillMaxSize().padding(8.dp), Alignment.Center) {
                 Text(
                     text = title.cleanTitle(includeYear = false), 
-                    color = Color.Gray, 
-                    fontSize = 10.sp, 
+                    color = Color.White, // 가시성을 위해 White로 변경
+                    fontSize = 14.sp,    // 글씨 크기도 약간 키움
                     textAlign = TextAlign.Center, 
-                    maxLines = 3,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
             }
