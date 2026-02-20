@@ -50,6 +50,8 @@ actual fun VideoPlayer(
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory))
+            .setSeekForwardIncrementMs(10000) // 10초 앞으로
+            .setSeekBackIncrementMs(10000) // 10초 뒤로
             .build().apply {
                 playWhenReady = true
                 addListener(object : Player.Listener {
@@ -97,6 +99,10 @@ actual fun VideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
+                    // PlayerView에서 이전/다음 버튼 보이지 않게 숨김 처리
+                    setShowPreviousButton(false)
+                    setShowNextButton(false)
+
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
                         currentOnVisibilityChanged?.invoke(visibility == View.VISIBLE)
                     })
