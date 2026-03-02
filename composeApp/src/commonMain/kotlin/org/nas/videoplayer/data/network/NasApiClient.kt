@@ -9,7 +9,7 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 
 object NasApiClient {
-    const val BASE_URL = "http://192.168.0.2:5000"
+    const val BASE_URL = "https://ggommi.duckdns.org:9811"
     const val IPHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, lifestyle Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
     val client = HttpClient {

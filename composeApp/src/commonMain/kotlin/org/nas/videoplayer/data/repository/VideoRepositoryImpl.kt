@@ -15,24 +15,30 @@ class VideoRepositoryImpl : VideoRepository {
     private val client = NasApiClient.client
     private val baseUrl = NasApiClient.BASE_URL.removeSuffix("/")
 
-    private fun fixCategoryPaths(categories: List<Category>): List<Category> {
-        return categories.map { category ->
-            category.copy(
-                movies = category.movies.map { movie ->
-                    movie.copy(
-                        videoUrl = if (movie.videoUrl.startsWith("/")) "$baseUrl${movie.videoUrl}" else movie.videoUrl,
-                        thumbnailUrl = if (movie.thumbnailUrl?.startsWith("/") == true) "$baseUrl${movie.thumbnailUrl}" else movie.thumbnailUrl
-                    )
-                }
-            )
+    private fun fixMoviePaths(movie: Movie): Movie {
+        return movie.copy(
+            videoUrl = if (movie.videoUrl.startsWith("/")) "$baseUrl${movie.videoUrl}" else movie.videoUrl,
+            thumbnailUrl = if (movie.thumbnailUrl?.startsWith("/") == true) "$baseUrl${movie.thumbnailUrl}" else movie.thumbnailUrl
+        )
+    }
+
+    private fun fixCategoryPaths(category: Category): Category {
+        val fixedMovies = category.movies.map { fixMoviePaths(it) }
+        val fixedSeasons = category.seasons?.mapValues { entry -> 
+            entry.value.map { fixMoviePaths(it) } 
         }
+        return category.copy(movies = fixedMovies, seasons = fixedSeasons)
+    }
+
+    private fun fixCategoriesPaths(categories: List<Category>): List<Category> {
+        return categories.map { fixCategoryPaths(it) }
     }
 
     override suspend fun getCategoryList(path: String): List<Category> {
         return try {
             val response = client.get("$baseUrl/list") { parameter("path", path) }
             val data = response.body<List<Category>>()
-            fixCategoryPaths(data)
+            fixCategoriesPaths(data)
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -55,7 +61,7 @@ class VideoRepositoryImpl : VideoRepository {
             }
 
             results.map { section ->
-                section.copy(items = fixCategoryPaths(section.items))
+                section.copy(items = fixCategoriesPaths(section.items))
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -68,18 +74,7 @@ class VideoRepositoryImpl : VideoRepository {
             val response = client.get("$baseUrl/api/series_detail") { parameter("path", path) }
             if (response.status == HttpStatusCode.OK) {
                 val category = response.body<Category>()
-                category.copy(
-                    movies = category.movies.map { movie ->
-                        movie.copy(
-                            videoUrl = if (movie.videoUrl.startsWith("/")) "$baseUrl${movie.videoUrl}" else movie.videoUrl,
-                            thumbnailUrl = if (movie.thumbnailUrl?.startsWith("/") == true) "$baseUrl${movie.thumbnailUrl}" else movie.thumbnailUrl
-                        )
-                    }.sortedWith(
-                        compareBy<Movie> { it.season_number ?: 0 }
-                            .thenBy { it.episode_number ?: 0 }
-                            .thenBy { it.title }
-                    )
-                )
+                fixCategoryPaths(category)
             } else {
                 null
             }
@@ -91,9 +86,12 @@ class VideoRepositoryImpl : VideoRepository {
 
     override suspend fun searchVideos(query: String, category: String): List<Series> {
         return try {
-            val response = client.get("$baseUrl/search") { parameter("q", query) }
+            val response = client.get("$baseUrl/search") { 
+                parameter("q", query)
+                if (category != "전체") parameter("cat", category)
+            }
             val results = response.body<List<Category>>()
-            fixCategoryPaths(results).flatMap { it.groupBySeries(it.path) }
+            fixCategoriesPaths(results).map { it.toSeries(it.path) }
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -102,7 +100,7 @@ class VideoRepositoryImpl : VideoRepository {
 
     override suspend fun getLatestMovies(): List<Series> {
         return try {
-            getCategorySections("movies", "최신").flatMap { it.items.flatMap { cat -> cat.groupBySeries() } }
+            getCategorySections("movies", "최신").flatMap { it.items.map { cat -> cat.toSeries() } }
         } catch (e: Exception) {
             emptyList()
         }
@@ -110,7 +108,7 @@ class VideoRepositoryImpl : VideoRepository {
 
     override suspend fun getAnimations(): List<Series> {
         return try {
-            getCategorySections("animations_all", "전체").flatMap { it.items.flatMap { cat -> cat.groupBySeries() } }
+            getCategorySections("animations_all", "전체").flatMap { it.items.map { cat -> cat.toSeries() } }
         } catch (e: Exception) {
             emptyList()
         }
@@ -118,8 +116,8 @@ class VideoRepositoryImpl : VideoRepository {
 
     override suspend fun getDramas(): List<Series> {
         return try {
-            val ktv = getCategorySections("koreantv", "드라마").flatMap { it.items.flatMap { cat -> cat.groupBySeries() } }
-            val ftv = getCategorySections("foreigntv", "드라마").flatMap { it.items.flatMap { cat -> cat.groupBySeries() } }
+            val ktv = getCategorySections("koreantv", "드라마").flatMap { it.items.map { cat -> cat.toSeries() } }
+            val ftv = getCategorySections("foreigntv", "드라마").flatMap { it.items.map { cat -> cat.toSeries() } }
             ktv + ftv
         } catch (e: Exception) {
             emptyList()
@@ -133,7 +131,7 @@ class VideoRepositoryImpl : VideoRepository {
             val response = client.get("$baseUrl/home")
             val sections = response.body<List<HomeSection>>()
             sections.map { section ->
-                section.copy(items = fixCategoryPaths(section.items))
+                section.copy(items = fixCategoriesPaths(section.items))
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -141,42 +139,21 @@ class VideoRepositoryImpl : VideoRepository {
         }
     }
 
-    private fun Category.groupBySeries(basePath: String? = null): List<Series> {
+    private fun Category.toSeries(basePath: String? = null): Series {
         val effectivePath = basePath ?: this.path
-        if (this.movies.isEmpty()) {
-            return listOf(Series(
-                title = this.name.cleanTitle(includeYear = false), 
-                episodes = emptyList(), 
-                posterPath = this.posterPath, 
-                overview = this.overview, 
-                year = this.year, 
-                fullPath = effectivePath, 
-                genreNames = this.genreNames,
-                director = this.director,
-                actors = this.actors,
-                rating = this.rating,
-                tmdbId = this.tmdbId
-            ))
-        }
-        return this.movies.groupBy { it.title.cleanTitle(includeYear = false) }
-            .map { (title, eps) -> 
-                Series(
-                    title = title, 
-                    episodes = eps.sortedWith(
-                        compareBy<Movie> { it.season_number ?: 0 }
-                            .thenBy { it.episode_number ?: 0 }
-                            .thenBy { it.title }
-                    ),
-                    posterPath = this.posterPath, 
-                    overview = this.overview, 
-                    year = this.year, 
-                    fullPath = effectivePath, 
-                    genreNames = this.genreNames,
-                    director = this.director,
-                    actors = this.actors,
-                    rating = this.rating,
-                    tmdbId = this.tmdbId
-                )
-            }.sortedBy { it.title }
+        return Series(
+            title = this.name, 
+            episodes = this.movies, 
+            posterPath = this.posterPath, 
+            overview = this.overview, 
+            year = this.year, 
+            fullPath = effectivePath, 
+            genreNames = this.genreNames,
+            director = this.director,
+            actors = this.actors,
+            rating = this.rating,
+            tmdbId = this.tmdbId,
+            seasons = this.seasons
+        )
     }
 }

@@ -19,7 +19,9 @@ data class Category(
     val director: String? = null,
     val actors: List<Actor>? = null,
     val tmdbId: String? = null,
-    val failed: Int = 0 // Changed from Boolean to Int to match server response (0 or 1)
+    val failed: Int = 0,
+    val seasons: Map<String, List<Movie>>? = null,
+    val chosung: String? = null // Added for indexing in full lists
 )
 
 @Serializable
@@ -45,7 +47,8 @@ data class Movie(
 @Serializable
 data class HomeSection(
     val title: String,
-    val items: List<Category>
+    val items: List<Category>,
+    val is_full_list: Boolean = false
 )
 
 data class Series(
@@ -60,7 +63,8 @@ data class Series(
     val director: String? = null,
     val actors: List<Actor>? = null,
     val rating: String? = null,
-    val tmdbId: String? = null
+    val tmdbId: String? = null,
+    val seasons: Map<String, List<Movie>>? = null
 )
 
 data class Season(val name: String, val episodes: List<Movie>, val seasonNumber: Int)
@@ -72,4 +76,7 @@ data class SeriesDetailState(
     val selectedSeasonIndex: Int = 0
 )
 
-enum class Screen { HOME, SEARCH, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, KOREAN_TV, LATEST }
+enum class Screen { 
+    HOME, SEARCH, ON_AIR, ANIMATIONS, MOVIES, FOREIGN_TV, KOREAN_TV, LATEST,
+    MUSIC_FOREIGN, MUSIC_JAPAN, MUSIC_CLASSIC, MUSIC_DSD, MUSIC_OST
+}

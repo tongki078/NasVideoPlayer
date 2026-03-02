@@ -61,18 +61,27 @@ fun SeriesDetailScreen(
                 genreNames = series.genreNames,
                 director = series.director,
                 actors = series.actors,
-                tmdbId = series.tmdbId
+                tmdbId = series.tmdbId,
+                seasons = series.seasons
             )
 
-            val rawEpisodes = finalDetail.movies.sortedByEpisode()
-            if (rawEpisodes.isNotEmpty()) {
-                val seasons = rawEpisodes.groupBy { it.season_number ?: it.title.extractSeason() }
-                    .map { (sNum, eps) -> Season("시즌 $sNum", eps, sNum) }
-                    .sortedBy { it.seasonNumber }
-                state = state.copy(detail = finalDetail, seasons = seasons, isLoading = false)
+            // Prefer server-side seasons grouping
+            val seasons = if (!finalDetail.seasons.isNullOrEmpty()) {
+                finalDetail.seasons.entries.map { (name, eps) ->
+                    Season(name, eps.sortedByEpisode(), eps.firstOrNull()?.season_number ?: 1)
+                }.sortedBy { it.seasonNumber }
             } else {
-                state = state.copy(detail = finalDetail, seasons = emptyList(), isLoading = false)
+                val rawEpisodes = finalDetail.movies.sortedByEpisode()
+                if (rawEpisodes.isNotEmpty()) {
+                    rawEpisodes.groupBy { it.season_number ?: it.title.extractSeason() }
+                        .map { (sNum, eps) -> Season("시즌 $sNum", eps, sNum) }
+                        .sortedBy { it.seasonNumber }
+                } else {
+                    emptyList()
+                }
             }
+            
+            state = state.copy(detail = finalDetail, seasons = seasons, isLoading = false)
         } catch (e: Exception) {
             e.printStackTrace()
             state = state.copy(isLoading = false)
@@ -206,8 +215,6 @@ private fun SeriesDetailHeader(
     
     val previewUrl = remember(previewEpisode, isIos) {
         if (isIos) {
-            // iOS: 미리보기(preview_serve)가 fMP4 관련 문제로 재생되지 않는 경우,
-            // HLS 지원이 되는 video_serve(전체 영상)를 사용하여 1분 지점부터 재생
             previewEpisode?.videoUrl
         } else {
             previewEpisode?.videoUrl?.replace("/video_serve", "/preview_serve")
@@ -223,10 +230,6 @@ private fun SeriesDetailHeader(
                 modifier = Modifier.fillMaxSize(), 
                 initialPosition = startPos, 
                 onPositionUpdate = { pos ->
-                    // iOS 미리보기 시 90초(1분30초) 지나면 다시 처음(60초)으로 루프하거나 정지
-                    if (isIos && pos > 90000L) {
-                        // 루프 로직은 VideoPlayer에 없으므로 여기선 간단히 둠 (실제 구현 시 seek 필요할 수 있음)
-                    }
                     onPositionUpdate(pos)
                 },
                 onFullscreenClick = onFullscreenClick,

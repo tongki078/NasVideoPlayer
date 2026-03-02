@@ -246,7 +246,11 @@ private fun SearchResultsGrid(
                 Card(
                     modifier = Modifier.aspectRatio(0.67f).clickable { onSeriesClick(series) }
                 ) {
-                    TmdbAsyncImage(series.title, Modifier.fillMaxSize())
+                    TmdbAsyncImage(
+                        title = series.title, 
+                        posterPath = series.posterPath,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
