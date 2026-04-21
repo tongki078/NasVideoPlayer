@@ -4,16 +4,18 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import kotlinx.serialization.json.Json
 import org.nas.videoplayer.data.network.NasApiClient
 import org.nas.videoplayer.domain.model.*
 import org.nas.videoplayer.domain.repository.VideoRepository
-import org.nas.videoplayer.cleanTitle
-import org.nas.videoplayer.extractSeason
-import org.nas.videoplayer.extractEpisode
 
 class VideoRepositoryImpl : VideoRepository {
     private val client = NasApiClient.client
     private val baseUrl = NasApiClient.BASE_URL.removeSuffix("/")
+    private val json = Json { 
+        ignoreUnknownKeys = true 
+        isLenient = true
+    }
 
     private fun fixMoviePaths(movie: Movie): Movie {
         return movie.copy(
@@ -139,8 +141,50 @@ class VideoRepositoryImpl : VideoRepository {
         }
     }
 
+    override suspend fun updateProgress(episodeId: String, position: Float, duration: Float): Boolean {
+        return try {
+            val response = client.post("$baseUrl/api/update_progress") {
+                contentType(ContentType.Application.Json)
+                setBody(mapOf(
+                    "episode_id" to episodeId,
+                    "position" to position,
+                    "duration" to duration
+                ))
+            }
+            response.status == HttpStatusCode.OK
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    override suspend fun getSubtitleInfo(path: String, type: String): SubtitleInfo? {
+        return try {
+            val response = client.get("$baseUrl/api/subtitle_info") {
+                parameter("path", path)
+                parameter("type", type)
+            }
+            if (response.status == HttpStatusCode.OK) {
+                response.body<SubtitleInfo>()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
     private fun Category.toSeries(basePath: String? = null): Series {
         val effectivePath = basePath ?: this.path
+        val tags = ai_tags?.let {
+            try {
+                json.decodeFromString<List<String>>(it)
+            } catch (e: Exception) {
+                emptyList<String>()
+            }
+        } ?: emptyList<String>()
+
         return Series(
             title = this.name, 
             episodes = this.movies, 
@@ -153,7 +197,8 @@ class VideoRepositoryImpl : VideoRepository {
             actors = this.actors,
             rating = this.rating,
             tmdbId = this.tmdbId,
-            seasons = this.seasons
+            seasons = this.seasons,
+            aiTags = tags
         )
     }
 }

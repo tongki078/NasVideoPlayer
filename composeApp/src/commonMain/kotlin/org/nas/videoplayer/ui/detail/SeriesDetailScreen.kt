@@ -29,8 +29,8 @@ import org.nas.videoplayer.ui.common.TmdbAsyncImage
 import org.nas.videoplayer.ui.common.shimmerBrush
 
 private fun List<Movie>.sortedByEpisode(): List<Movie> = this.sortedWith(
-    compareBy<Movie> { it.season_number ?: it.title.extractSeason() }
-        .thenBy { it.episode_number ?: it.title.extractEpisode()?.filter { char -> char.isDigit() }?.toIntOrNull() ?: 0 }
+    compareBy<Movie> { it.season_number ?: 1 }
+        .thenBy { it.episode_number ?: 0 }
 )
 
 @Composable
@@ -65,7 +65,6 @@ fun SeriesDetailScreen(
                 seasons = series.seasons
             )
 
-            // Prefer server-side seasons grouping
             val seasons = if (!finalDetail.seasons.isNullOrEmpty()) {
                 finalDetail.seasons.entries.map { (name, eps) ->
                     Season(name, eps.sortedByEpisode(), eps.firstOrNull()?.season_number ?: 1)
@@ -73,7 +72,7 @@ fun SeriesDetailScreen(
             } else {
                 val rawEpisodes = finalDetail.movies.sortedByEpisode()
                 if (rawEpisodes.isNotEmpty()) {
-                    rawEpisodes.groupBy { it.season_number ?: it.title.extractSeason() }
+                    rawEpisodes.groupBy { it.season_number ?: 1 }
                         .map { (sNum, eps) -> Season("시즌 $sNum", eps, sNum) }
                         .sortedBy { it.seasonNumber }
                 } else {
@@ -255,18 +254,40 @@ private fun SeriesDetailHeader(
     val year = detail?.year ?: series.year
     val rating = detail?.rating ?: series.rating
     val genres = detail?.genreNames?.joinToString(", ")
+    val aiTags = series.aiTags.takeIf { it.isNotEmpty() } ?: emptyList()
     
-    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (!year.isNullOrBlank()) {
-            Text(year, color = Color.LightGray, fontSize = 14.sp)
-            Spacer(Modifier.width(12.dp))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!year.isNullOrBlank()) {
+                Text(year, color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.width(12.dp))
+            }
+            if (!rating.isNullOrBlank()) {
+                Text(rating, color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.border(1.dp, Color.Gray, RoundedCornerShape(2.dp)).padding(horizontal = 4.dp))
+                Spacer(Modifier.width(12.dp))
+            }
+            if (!genres.isNullOrBlank()) {
+                Text(genres, color = Color.LightGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
-        if (!rating.isNullOrBlank()) {
-            Text(rating, color = Color.LightGray, fontSize = 14.sp, modifier = Modifier.border(1.dp, Color.Gray, RoundedCornerShape(2.dp)).padding(horizontal = 4.dp))
-            Spacer(Modifier.width(12.dp))
-        }
-        if (!genres.isNullOrBlank()) {
-            Text(genres, color = Color.LightGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        
+        if (aiTags.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(aiTags) { tag ->
+                    Surface(
+                        color = Color.DarkGray.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "#$tag",
+                            color = Color.LightGray,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
         }
     }
     
@@ -292,10 +313,31 @@ fun EpisodeItem(movie: Movie, onPlay: () -> Unit) {
             if (imageUrl.isNotEmpty()) {
                 AsyncImage(model = imageUrl, contentDescription = movie.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             }
+            
+            movie.position?.let { pos ->
+                val duration = movie.runtime?.times(60000f) ?: 0f
+                if (duration > 0) {
+                    val progress = (pos * 1000) / duration // position is in seconds in some contexts, but here it seems we might need to clarify
+                    // Assuming position is what server sends from playback_progress table (position REAL)
+                    // Let's assume it's in seconds for now as most players use seconds or ms.
+                    // If server saves seconds, and runtime is minutes:
+                    val progressRatio = pos / (movie.runtime!! * 60f)
+                    if (progressRatio > 0.05f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth(progressRatio.coerceIn(0f, 1f))
+                                .height(3.dp)
+                                .background(Color.Red)
+                        )
+                    }
+                }
+            }
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text(movie.title.prettyTitle(), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val titleText = if (!movie.tag.isNullOrEmpty()) "[${movie.tag}] ${movie.title}" else movie.title
+            Text(titleText.prettyTitle(), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             val summary = movie.overview ?: "에피소드 정보가 없습니다."
             Text(text = summary, color = Color.Gray, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)

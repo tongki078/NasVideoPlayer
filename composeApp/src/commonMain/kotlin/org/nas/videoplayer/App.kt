@@ -150,6 +150,7 @@ fun App(driver: SqlDriver) {
                                 movie = selectedMovie!!, 
                                 playlist = moviePlaylist,
                                 initialPosition = lastPlaybackPosition,
+                                repository = repository,
                                 onPositionUpdate = { 
                                     lastPlaybackPosition = it
                                 },

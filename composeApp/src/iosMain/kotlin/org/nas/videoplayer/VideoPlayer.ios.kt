@@ -11,8 +11,8 @@ import platform.AVKit.*
 import platform.CoreMedia.*
 import platform.Foundation.*
 import platform.UIKit.*
-import platform.darwin.NSObject
 import org.nas.videoplayer.data.network.NasApiClient
+import org.nas.videoplayer.domain.model.SubtitleInfo
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
@@ -20,6 +20,7 @@ actual fun VideoPlayer(
     url: String,
     modifier: Modifier,
     initialPosition: Long,
+    subtitleInfo: SubtitleInfo?,
     onPositionUpdate: ((Long) -> Unit)?,
     onControllerVisibilityChanged: ((Boolean) -> Unit)?,
     onFullscreenClick: (() -> Unit)?,
@@ -33,8 +34,6 @@ actual fun VideoPlayer(
     }
 
     val player = remember { AVPlayer() }
-    
-    // Create AVPlayerViewController inside remember to persist it across recompositions
     val playerViewController = remember { AVPlayerViewController() }
 
     LaunchedEffect(player) {
@@ -72,8 +71,6 @@ actual fun VideoPlayer(
         player.replaceCurrentItemWithPlayerItem(item)
 
         if (initialPosition > 0) {
-            // Use CMTimeMake for precise seeking. initialPosition is in milliseconds.
-            // CMTimeMake(value, timescale) -> value / timescale = seconds
             val cmTime = CMTimeMake(initialPosition, 1000)
             player.seekToTime(cmTime)
         }
@@ -91,7 +88,7 @@ actual fun VideoPlayer(
         },
         modifier = modifier,
         update = {
-            // No update needed as the player is managed internally
+            // Subtitle handling could be added here for iOS if needed
         }
     )
 }

@@ -19,6 +19,7 @@ import android.view.View
 import androidx.compose.foundation.layout.fillMaxSize
 import kotlinx.coroutines.delay
 import org.nas.videoplayer.data.network.NasApiClient
+import org.nas.videoplayer.domain.model.SubtitleInfo
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -26,6 +27,7 @@ actual fun VideoPlayer(
     url: String,
     modifier: Modifier,
     initialPosition: Long,
+    subtitleInfo: SubtitleInfo?,
     onPositionUpdate: ((Long) -> Unit)?,
     onControllerVisibilityChanged: ((Boolean) -> Unit)?,
     onFullscreenClick: (() -> Unit)?,
@@ -50,8 +52,8 @@ actual fun VideoPlayer(
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory))
-            .setSeekForwardIncrementMs(10000) // 10초 앞으로
-            .setSeekBackIncrementMs(10000) // 10초 뒤로
+            .setSeekForwardIncrementMs(10000)
+            .setSeekBackIncrementMs(10000)
             .build().apply {
                 playWhenReady = true
                 addListener(object : Player.Listener {
@@ -99,18 +101,11 @@ actual fun VideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
-                    
-                    // AndroidX Media3 PlayerView에서 이전/다음 버튼을 완전히 숨기기 위해서는 
-                    // setShowPreviousButton, setShowNextButton 만으로는 공간이 남거나 완벽히 제어되지 않을 수 있습니다.
-                    // 레이아웃 파일 조작 없이 코드상에서 커스텀 레이아웃을 완전히 덮어씌우지 않는 한,
-                    // 가장 확실한 방법은 버튼 자체의 Visibility를 GONE으로 만들거나 
-                    // 앞서 실패했던 명령 제한 방식을 PlayerView 수준에서 강제하는 것입니다.
                     setShowNextButton(false)
                     setShowPreviousButton(false)
                     setShowFastForwardButton(true)
                     setShowRewindButton(true)
                     
-                    // 레이아웃의 내부 뷰를 찾아서 간격과 크기를 조정하는 편법 적용
                     post {
                         try {
                             val exoPrev = findViewById<View>(androidx.media3.ui.R.id.exo_prev)
@@ -118,7 +113,6 @@ actual fun VideoPlayer(
                             exoPrev?.visibility = View.GONE
                             exoNext?.visibility = View.GONE
                             
-                            // 넷플릭스처럼 10초 앞/뒤, 재생 버튼 크기 키우기 및 간격 넓히기
                             val exoRew = findViewById<View>(androidx.media3.ui.R.id.exo_rew)
                             val exoFfwd = findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)
                             val exoPlay = findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)
@@ -127,8 +121,8 @@ actual fun VideoPlayer(
                             val paramsFfwd = exoFfwd?.layoutParams as? android.widget.LinearLayout.LayoutParams
                             val paramsPlay = exoPlay?.layoutParams as? android.widget.LinearLayout.LayoutParams
                             
-                            val margin = 80 // 버튼 간 간격을 넓힘
-                            val size = 160 // 버튼 크기를 키움 (dp 단위가 아님에 주의, 픽셀)
+                            val margin = 80 
+                            val size = 160 
                             
                             paramsRew?.apply {
                                 width = size; height = size
@@ -139,7 +133,7 @@ actual fun VideoPlayer(
                                 marginStart = margin
                             }
                             paramsPlay?.apply {
-                                width = size + 40; height = size + 40 // 재생 버튼은 더 크게
+                                width = size + 40; height = size + 40
                             }
                             
                             exoRew?.layoutParams = paramsRew

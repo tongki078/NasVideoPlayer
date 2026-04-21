@@ -1,8 +1,6 @@
 package org.nas.videoplayer.domain.repository
 
-import org.nas.videoplayer.domain.model.Category
-import org.nas.videoplayer.domain.model.Series
-import org.nas.videoplayer.domain.model.HomeSection
+import org.nas.videoplayer.domain.model.*
 
 interface VideoRepository {
     suspend fun getCategoryList(path: String): List<Category>
@@ -14,4 +12,6 @@ interface VideoRepository {
     suspend fun getDramas(): List<Series>
     suspend fun getAnimationsAll(): List<Series>
     suspend fun getHomeSections(): List<HomeSection>
+    suspend fun updateProgress(episodeId: String, position: Float, duration: Float): Boolean
+    suspend fun getSubtitleInfo(path: String, type: String): SubtitleInfo?
 }

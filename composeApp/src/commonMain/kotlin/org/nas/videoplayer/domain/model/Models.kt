@@ -21,7 +21,9 @@ data class Category(
     val tmdbId: String? = null,
     val failed: Int = 0,
     val seasons: Map<String, List<Movie>>? = null,
-    val chosung: String? = null // Added for indexing in full lists
+    val chosung: String? = null,
+    val ai_tags: String? = null, // JSON string of tags
+    val updated_at: String? = null
 )
 
 @Serializable
@@ -41,7 +43,11 @@ data class Movie(
     val overview: String? = null,
     val air_date: String? = null,
     val season_number: Int? = null,
-    val episode_number: Int? = null
+    val episode_number: Int? = null,
+    val runtime: Int? = null,
+    val position: Float? = null,
+    val category: String? = null,
+    val tag: String? = null
 )
 
 @Serializable
@@ -64,7 +70,8 @@ data class Series(
     val actors: List<Actor>? = null,
     val rating: String? = null,
     val tmdbId: String? = null,
-    val seasons: Map<String, List<Movie>>? = null
+    val seasons: Map<String, List<Movie>>? = null,
+    val aiTags: List<String> = emptyList()
 )
 
 data class Season(val name: String, val episodes: List<Movie>, val seasonNumber: Int)
@@ -74,6 +81,26 @@ data class SeriesDetailState(
     val seasons: List<Season> = emptyList(),
     val isLoading: Boolean = true,
     val selectedSeasonIndex: Int = 0
+)
+
+@Serializable
+data class SubtitleInfo(
+    val external: List<ExternalSubtitle> = emptyList(),
+    val embedded: List<EmbeddedSubtitle> = emptyList(),
+    val extraction_triggered: Boolean = false
+)
+
+@Serializable
+data class ExternalSubtitle(
+    val name: String,
+    val path: String
+)
+
+@Serializable
+data class EmbeddedSubtitle(
+    val index: Int,
+    val codec_name: String? = null,
+    val tags: Map<String, String>? = null
 )
 
 enum class Screen { 
